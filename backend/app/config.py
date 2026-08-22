@@ -1,0 +1,100 @@
+"""Application configuration.
+
+Every setting can be overridden through the environment or a ``.env`` file.
+See ``.env.example`` for documentation of each value.
+"""
+from __future__ import annotations
+
+import os
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Repository root: backend/app/config.py -> backend/app -> backend -> root
+ROOT_DIR = Path(__file__).resolve().parents[2]
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=os.environ.get("ENV_FILE", ROOT_DIR / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # --- storage ---
+    database_url: str = "sqlite:///data/app.sqlite3"
+    source_directory: Path = Path("data/sources")
+    cache_directory: Path = Path("data/cache")
+    output_directory: Path = Path("data/jobs")
+
+    # --- generation ---
+    max_concurrent_downloads: int = Field(default=8, ge=1, le=32)
+    job_timeout: int = Field(default=1800, ge=30)
+    job_retention: int = Field(default=86_400, ge=60)
+    cache_retention: int = Field(default=2_592_000, ge=60)
+    max_retries: int = Field(default=3, ge=1, le=10)
+    max_pieces_per_job: int = Field(default=6000, ge=1)
+    max_zip_bytes: int = Field(default=2_147_483_648, ge=1)
+
+    # --- rate limiting ---
+    rate_limit_requests: int = Field(default=10, ge=1)
+    rate_limit_window: int = Field(default=60, ge=1)
+
+    # --- geometry ---
+    ldu_mm: float = Field(default=0.4, gt=0)
+    part_scale: float = Field(default=1.0, gt=0)
+    stl_binary: bool = True
+    auto_orient: bool = True
+    #: "native" keeps LDraw orientation (studs up); "flat" lays parts down.
+    orient_strategy: str = "native"
+
+    # --- providers ---
+    set_provider: str = "rebrickable_csv"
+    model_provider: str = "ldraw"
+    rebrickable_api_key: str = ""
+
+    # --- server ---
+    host: str = "127.0.0.1"
+    port: int = 8000
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    log_level: str = "INFO"
+
+    @field_validator("source_directory", "cache_directory", "output_directory")
+    @classmethod
+    def _absolutise(cls, value: Path) -> Path:
+        """Resolve relative paths against the repository root, not the cwd."""
+        return value if value.is_absolute() else (ROOT_DIR / value)
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def sqlite_path(self) -> Path:
+        """Filesystem path behind ``database_url`` (sqlite URLs only)."""
+        url = self.database_url
+        if not url.startswith("sqlite:"):
+            raise ValueError(f"Only sqlite:// URLs are supported, got {url!r}")
+        raw = url.split("sqlite:///", 1)[-1] if "sqlite:///" in url else url.split("sqlite:", 1)[-1]
+        path = Path(raw)
+        return path if path.is_absolute() else (ROOT_DIR / path)
+
+    @property
+    def ldraw_dir(self) -> Path:
+        return self.source_directory / "ldraw"
+
+    @property
+    def rebrickable_dir(self) -> Path:
+        return self.source_directory / "rebrickable"
+
+    def ensure_directories(self) -> None:
+        for d in (self.source_directory, self.cache_directory, self.output_directory):
+            d.mkdir(parents=True, exist_ok=True)
+        self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

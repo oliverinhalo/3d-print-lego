@@ -1,0 +1,123 @@
+import { useRef, useState } from 'react'
+import { searchSets, startGeneration } from '../lib/api'
+import type { LegoSet } from '../types'
+
+const STEPS = [
+  { num: '01', label: 'Enter your set', detail: 'Any LEGO set number' },
+  { num: '02', label: 'We find every part', detail: 'Full inventory, deduplicated' },
+  { num: '03', label: 'Models prepared', detail: 'Validated, millimetre-accurate' },
+  { num: '04', label: 'Download', detail: 'One clean ZIP' },
+  { num: '05', label: 'Drag into slicer', detail: 'Bambu, Orca, Cura, Prusa' },
+  { num: '06', label: 'Auto Arrange', detail: 'Then print' },
+]
+
+export function Home({ onStarted }: { onStarted: (jobId: string) => void }) {
+  const [value, setValue] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [suggestions, setSuggestions] = useState<LegoSet[]>([])
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  async function submit(setNumber: string) {
+    const query = setNumber.trim()
+    if (!query) {
+      setError('Enter a LEGO set number to get started.')
+      inputRef.current?.focus()
+      return
+    }
+    setBusy(true)
+    setError('')
+    setSuggestions([])
+    try {
+      const { job_id } = await startGeneration(query)
+      onStarted(job_id)
+    } catch (err) {
+      const message = (err as Error).message
+      setError(message)
+      // A number we cannot find is usually a typo — offer close matches.
+      if (/not found|catalogue/i.test(message)) {
+        try {
+          const { results } = await searchSets(query.replace(/[^0-9a-z ]/gi, ''))
+          setSuggestions(results.slice(0, 4))
+        } catch { /* suggestions are a bonus, never a blocker */ }
+      }
+      setBusy(false)
+    }
+  }
+
+  return (
+    <main className="home">
+      <section className="hero">
+        <h1>Build your LEGO set.<span>Print every piece.</span></h1>
+        <p className="lede">
+          Enter a set number and we'll prepare the complete set of printable
+          3D models — ready to drop straight into your slicer.
+        </p>
+
+        <form className="search"
+              onSubmit={(e) => { e.preventDefault(); void submit(value) }}>
+          <div className="search-field">
+            <span className="hash">#</span>
+            <input
+              ref={inputRef}
+              value={value}
+              onChange={(e) => { setValue(e.target.value); setError('') }}
+              placeholder="77263"
+              aria-label="LEGO set number"
+              autoFocus
+              autoComplete="off"
+              spellCheck={false}
+              disabled={busy}
+            />
+          </div>
+
+          {error && <div className="form-error">{error}</div>}
+
+          <button className="btn-primary" type="submit" disabled={busy}>
+            {busy ? 'Starting…' : 'Generate Printable Set'}
+          </button>
+        </form>
+
+        {suggestions.length > 0 && (
+          <div className="suggestions">
+            <h4>Did you mean</h4>
+            {suggestions.map(set => (
+              <button className="suggestion" key={set.set_num}
+                      onClick={() => { setValue(set.display_number); void submit(set.set_num) }}>
+                {set.img_url
+                  ? <img src={set.img_url} alt="" loading="lazy" />
+                  : <span style={{ width: 46 }} />}
+                <span className="meta">
+                  <strong>{set.name}</strong>
+                  <span>#{set.display_number} · {set.num_parts} pieces</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="how">
+        <h3>How it works</h3>
+        <div className="steps">
+          {STEPS.map(step => (
+            <div className="step" key={step.num}>
+              <div className="num">{step.num}</div>
+              <div className="label">{step.label}</div>
+              <div className="detail">{step.detail}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <p className="footnote">
+        Geometry comes from the open <a href="https://library.ldraw.org/"
+        target="_blank" rel="noreferrer">LDraw Parts Library</a> (CC BY); inventories
+        come from the public <a href="https://rebrickable.com/downloads/"
+        target="_blank" rel="noreferrer">Rebrickable</a> dataset. For personal use.
+        LEGO® is a trademark of the LEGO Group, which does not sponsor or endorse
+        this project.
+      </p>
+    </main>
+  )
+}
