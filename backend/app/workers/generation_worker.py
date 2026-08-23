@@ -31,7 +31,8 @@ from ..providers.registry import ProviderRegistry
 from ..services.cache_service import CacheService
 from ..services.color_service import ColorMode, ColorService, group_key, group_swatch
 from ..services.job_service import JobManager
-from ..services.plate_service import PackItem, Plate, bed_size, pack_items
+from ..services.plate_service import (PackItem, Plate, bed_height, bed_size,
+                                      pack_items)
 from ..services.threemf_service import (TooManyPlates, plate_filename,
                                         project_filename, write_plate_3mf,
                                         write_project_3mf)
@@ -408,7 +409,8 @@ class GenerationWorker:
             number = job.lego_set.display_number if job.lego_set else "set"
             path = directory / project_filename(number)
             try:
-                write_project_3mf(job.plates, by_key, path, title=title)
+                write_project_3mf(job.plates, by_key, path, title=title,
+                                  bed_height_mm=bed_height(job.bed_preset))
                 project = path
             except TooManyPlates as exc:
                 # Falling back is better than failing: the per-plate files

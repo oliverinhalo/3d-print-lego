@@ -19,16 +19,21 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 #: Common printers, so the UI can offer names rather than numbers.
-#: Values are usable print area in millimetres (width, depth).
+#: Values are the usable build volume in millimetres (width, depth, height).
+BED_VOLUMES: dict[str, tuple[float, float, float]] = {
+    "bambu_a1_mini": (180.0, 180.0, 180.0),
+    "bambu_a1": (256.0, 256.0, 256.0),
+    "bambu_p1": (256.0, 256.0, 256.0),
+    "bambu_x1": (256.0, 256.0, 256.0),
+    "bambu_h2d": (325.0, 320.0, 325.0),
+    "prusa_mk4": (250.0, 210.0, 220.0),
+    "ender_3": (220.0, 220.0, 250.0),
+    "voron_350": (350.0, 350.0, 350.0),
+}
+
+#: Print area only, which is all the packer needs.
 BED_PRESETS: dict[str, tuple[float, float]] = {
-    "bambu_a1_mini": (180.0, 180.0),
-    "bambu_a1": (256.0, 256.0),
-    "bambu_p1": (256.0, 256.0),
-    "bambu_x1": (256.0, 256.0),
-    "bambu_h2d": (325.0, 320.0),
-    "prusa_mk4": (250.0, 210.0),
-    "ender_3": (220.0, 220.0),
-    "voron_350": (350.0, 350.0),
+    name: (volume[0], volume[1]) for name, volume in BED_VOLUMES.items()
 }
 
 DEFAULT_BED = "bambu_p1"
@@ -43,6 +48,11 @@ DEFAULT_MARGIN_MM = 5.0
 
 def bed_size(preset: str) -> tuple[float, float]:
     return BED_PRESETS.get(preset, BED_PRESETS[DEFAULT_BED])
+
+
+def bed_height(preset: str) -> float:
+    """Maximum print height for a printer, in millimetres."""
+    return BED_VOLUMES.get(preset, BED_VOLUMES[DEFAULT_BED])[2]
 
 
 @dataclass(slots=True)
@@ -80,6 +90,9 @@ class Placement:
 class Plate:
     index: int                 # 1-based
     group: str = ""
+    #: Set when a group needs more than one plate, e.g. 2 for "Red 2 of 3".
+    group_index: int = 0
+    group_total: int = 1
     placements: list[Placement] = field(default_factory=list)
     bed_width: float = 256.0
     bed_depth: float = 256.0
@@ -104,10 +117,20 @@ class Plate:
                 return placement.item.color_rgb
         return None
 
+    @property
+    def label(self) -> str:
+        """Name shown on the plate: its colour, numbered when it repeats."""
+        if not self.group:
+            return f"Plate {self.index}"
+        if self.group_total > 1:
+            return f"{self.group} {self.group_index}"
+        return self.group
+
     def to_dict(self) -> dict:
         return {
             "index": self.index,
             "group": self.group,
+            "label": self.label,
             "count": self.count,
             "fill_percent": round(self.fill_percent, 1),
             "bed": [self.bed_width, self.bed_depth],
@@ -159,6 +182,18 @@ def pack_items(items: list[PackItem], bed: tuple[float, float],
 
     for number, plate in enumerate(plates, start=1):
         plate.index = number
+
+    # A colour that needs several plates gets numbered, so the slicer does not
+    # show three tabs all called "Red".
+    counts: dict[str, int] = {}
+    for plate in plates:
+        counts[plate.group] = counts.get(plate.group, 0) + 1
+    seen: dict[str, int] = {}
+    for plate in plates:
+        seen[plate.group] = seen.get(plate.group, 0) + 1
+        plate.group_index = seen[plate.group]
+        plate.group_total = counts[plate.group]
+
     return plates, oversized
 
 

@@ -171,8 +171,14 @@ is named. That was a bug in versions before this fix — update with
 folder gives you the same parts, one file per plate.
 
 **Plates open in the wrong positions**
-The printer selected when generating must match the printer profile in your
-slicer — plate spacing is derived from the bed size.
+Fixed in current versions: the project file now declares the bed it was
+packed for, so the slicer builds its plate grid to match. Update with
+`docker compose up -d --build` and generate again. Still choose the printer
+you actually own — it decides the plate count and whether big parts fit.
+
+**I want to move a whole plate at once**
+Each plate is a single object in the project file, so selecting and dragging
+it moves all of its pieces together.
 
 **A few parts fail to generate**
 That is expected and not a bug. Very new LEGO elements have not been modelled

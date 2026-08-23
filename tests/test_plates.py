@@ -341,13 +341,32 @@ class TestProjectFile:
                for p in config.findall("plate")]
         assert ids == list(range(1, len(ids) + 1))
 
-    def test_every_piece_is_listed_on_exactly_one_plate(self, project):
+    def test_each_plate_is_one_movable_object(self, project):
+        """A plate should be one thing you can select and drag, not N things."""
         plates, path = project
-        _model, config = self._model(path)
-        listed = sum(len(p.findall("model_instance")) for p in config.findall("plate"))
-        assert listed == sum(p.count for p in plates)
+        model, config = self._model(path)
 
-    def test_pieces_sit_inside_their_own_plate_area(self, project):
+        component_objects = [o for o in model.findall(".//c:resources/c:object", NS)
+                             if o.find("c:components", NS) is not None]
+        assert len(component_objects) == len(plates)
+
+        # Exactly one instance per plate, and one build item per plate.
+        for plate_config in config.findall("plate"):
+            assert len(plate_config.findall("model_instance")) == 1
+        assert len(model.findall(".//c:build/c:item", NS)) == len(plates)
+
+    def test_every_piece_is_a_component_of_its_plate(self, project):
+        plates, path = project
+        model, _config = self._model(path)
+        component_objects = [o for o in model.findall(".//c:resources/c:object", NS)
+                             if o.find("c:components", NS) is not None]
+
+        for plate, obj in zip(plates, component_objects):
+            assert len(obj.findall(".//c:component", NS)) == plate.count
+        total = sum(len(o.findall(".//c:component", NS)) for o in component_objects)
+        assert total == sum(p.count for p in plates)
+
+    def test_each_plate_object_sits_on_its_own_plate(self, project):
         """The slicer assigns plates by geometry, so this is what decides it."""
         from app.services.threemf_service import plate_columns, plate_origin
 
@@ -356,16 +375,36 @@ class TestProjectFile:
         items = model.findall(".//c:build/c:item", NS)
         columns = plate_columns(len(plates))
 
-        index = 0
-        for number, plate in enumerate(plates):
+        for number, (plate, build_item) in enumerate(zip(plates, items)):
             origin_x, origin_y = plate_origin(number, columns,
                                               plate.bed_width, plate.bed_depth)
-            for _placement in plate.placements:
-                values = [float(v) for v in items[index].get("transform").split()]
-                x, y = values[9], values[10]
-                assert origin_x - 1e-6 <= x <= origin_x + plate.bed_width + 1e-6
-                assert origin_y - 1e-6 <= y <= origin_y + plate.bed_depth + 1e-6
-                index += 1
+            values = [float(v) for v in build_item.get("transform").split()]
+            assert values[9] == pytest.approx(origin_x, abs=1e-6)
+            assert values[10] == pytest.approx(origin_y, abs=1e-6)
+
+    def test_components_stay_within_the_bed(self, project):
+        """Component transforms are plate-local, so they must fit the bed."""
+        plates, path = project
+        model, _config = self._model(path)
+        component_objects = [o for o in model.findall(".//c:resources/c:object", NS)
+                             if o.find("c:components", NS) is not None]
+
+        for plate, obj in zip(plates, component_objects):
+            for component in obj.findall(".//c:component", NS):
+                values = [float(v) for v in component.get("transform").split()]
+                assert 0 <= values[9] <= plate.bed_width
+                assert 0 <= values[10] <= plate.bed_depth
+
+    def test_the_bed_it_was_packed_for_is_declared(self, project):
+        """Otherwise the slicer lays plates out using whatever profile is loaded."""
+        import json
+
+        plates, path = project
+        with zipfile.ZipFile(path) as zf:
+            settings = json.loads(zf.read("Metadata/project_settings.config"))
+        width, depth = plates[0].bed_width, plates[0].bed_depth
+        assert settings["printable_area"] == [
+            "0x0", f"{width:g}x0", f"{width:g}x{depth:g}", f"0x{depth:g}"]
 
     def test_plates_do_not_overlap_each_other_in_world_space(self, project):
         from app.services.threemf_service import plate_columns, plate_origin
@@ -381,30 +420,40 @@ class TestProjectFile:
                 a, b = boxes[i], boxes[j]
                 assert not (a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3])
 
-    def test_instance_ids_follow_the_build_item_order(self, project):
-        """The importer numbers instances as it reads build items."""
+    def test_declared_instances_match_the_build_items(self, project):
+        """Each plate's recorded object must be the one actually built there."""
         _plates, path = project
         model, config = self._model(path)
 
-        seen: dict[int, int] = {}
-        expected = []
-        for build_item in model.findall(".//c:build/c:item", NS):
-            object_id = int(build_item.get("objectid"))
-            expected.append((object_id, seen.get(object_id, 0)))
-            seen[object_id] = seen.get(object_id, 0) + 1
-
+        built = [(int(i.get("objectid")), 0)
+                 for i in model.findall(".//c:build/c:item", NS)]
         declared = []
         for plate in config.findall("plate"):
             for instance in plate.findall("model_instance"):
                 meta = {m.get("key"): m.get("value") for m in instance.findall("metadata")}
                 declared.append((int(meta["object_id"]), int(meta["instance_id"])))
-        assert declared == expected
+        assert declared == built
+
+    def test_repeated_colours_get_distinct_plate_names(self):
+        """Three red plates must not all be called "Red"."""
+        plates, _ = pack_items([item(group="Red") for _ in range(400)],
+                               bed_size("bambu_a1_mini"), group_plates=True)
+        assert len(plates) > 1
+        labels = [p.label for p in plates]
+        assert len(set(labels)) == len(labels)
+        assert all(label.startswith("Red") for label in labels)
 
     def test_geometry_is_still_shared_across_plates(self, project):
+        """One mesh for the shape, however many plates reference it."""
         plates, path = project
         model, _config = self._model(path)
-        assert len(model.findall(".//c:resources/c:object", NS)) == 1
-        assert len(model.findall(".//c:build/c:item", NS)) == sum(p.count for p in plates)
+        mesh_objects = [o for o in model.findall(".//c:resources/c:object", NS)
+                        if o.find("c:mesh", NS) is not None]
+        assert len(mesh_objects) == 1
+        total = sum(len(o.findall(".//c:component", NS))
+                    for o in model.findall(".//c:resources/c:object", NS)
+                    if o.find("c:components", NS) is not None)
+        assert total == sum(p.count for p in plates)
 
     def test_too_many_plates_is_refused_rather_than_written_wrong(self, tmp_path):
         from app.services.threemf_service import (MAX_PROJECT_PLATES, TooManyPlates,

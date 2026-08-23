@@ -156,9 +156,19 @@ compatibility requirement rather than a claim of authorship (OrcaSlicer
 writes the same prefix for the same reason); the real generator is recorded
 in the `Description` metadata beside it.
 
-**Pick the printer that matches your slicer profile.** Plate positions are
-computed from the bed size, so generating for a 256 x 256 bed and opening the
-project on an A1 mini profile puts the parts in the wrong places. Bambu decides which plate an
+**Each plate is one object.** A plate's pieces are written as 3MF
+``<components>`` of a single object, so the slicer shows one selectable,
+draggable thing per plate rather than several hundred. The geometry is still
+stored once per shape and referenced by each copy, so this costs nothing in
+file size.
+
+**The file declares the bed it was packed for.** Plate positions come from
+the bed size, so a project packed for 256 x 256 and opened on an A1 mini
+profile would put every plate after the first in the wrong place. The
+project therefore writes ``printable_area`` into
+``Metadata/project_settings.config``, and the slicer lays its plate grid out
+to match. Choosing the right printer in the options is still worth doing —
+it decides how many plates you get and whether large parts fit. Bambu decides which plate an
 instance belongs to by *where it sits in world space*, so each plate's pieces
 are written at that plate's world origin, reproducing the slicer's own grid
 arithmetic (`compute_colum_count` and `LOGICAL_PART_PLATE_GAP` from
