@@ -9,10 +9,15 @@ Dockerfile text eol=lf
 *.yaml text eol=lf
 
 # Windows batch files MUST be CRLF. With LF endings cmd.exe mis-parses
-# labels and goto targets, so the installer would fail in confusing ways.
-*.bat  text eol=crlf
-*.cmd  text eol=crlf
-*.ps1  text eol=crlf
+# labels and goto targets, so the installer fails in confusing ways.
+#
+# "-text" (not "text eol=crlf") is deliberate: eol=crlf only converts on
+# git checkout, whereas raw.githubusercontent.com serves the stored blob
+# verbatim. Users download install.bat straight from that URL, so the CRLF
+# has to be in the blob itself, not applied at checkout time.
+*.bat  -text
+*.cmd  -text
+*.ps1  -text
 
 # Binary assets must never be line-ending converted.
 *.png  binary
