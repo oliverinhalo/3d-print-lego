@@ -45,7 +45,8 @@ class ZipResult:
 
 def build_readme(job: Job, instance_count: int, unique_count: int,
                  failed: list[PrintPart], *, plate_count: int = 0,
-                 include_stls: bool = False) -> str:
+                 include_stls: bool = False, project_name: str | None = None,
+                 separate_plates: int = 0) -> str:
     lego_set = job.lego_set
     set_line = (f"{lego_set.name}  (#{lego_set.display_number})"
                 if lego_set else job.query)
@@ -66,19 +67,43 @@ def build_readme(job: Job, instance_count: int, unique_count: int,
     lines.append("")
 
     if plate_count:
+        lines += ["HOW TO PRINT", "-" * 68, ""]
+
+        if project_name:
+            lines += [
+                "  EASIEST: open this one file",
+                "",
+                f"      {project_name}",
+                "",
+                f"  It contains all {plate_count} plates in a single project. Every",
+                "  plate is already arranged, and each is named after its colour,",
+                "  so you can switch plates inside the slicer and print them in",
+                "  turn. Nothing to import, nothing to arrange.",
+                "",
+                "  This uses Bambu Studio's project format. It should also open in",
+                "  OrcaSlicer. If your slicer does not understand it, use the",
+                "  Plates folder below instead - same parts, same arrangement.",
+                "",
+            ]
+
+        if separate_plates:
+            heading = "  ALTERNATIVE: one file per plate" if project_name else "  Open one plate at a time"
+            lines += [
+                heading,
+                "",
+                "  1. Open the Plates folder.",
+                "  2. Open ONE plate file, for example Plate_01.3mf.",
+                "  3. It opens already arranged. Slice and print.",
+                "  4. Repeat for each plate.",
+                "",
+                "  Do NOT select every plate at once - each file is one plateful.",
+                "  These are plain 3MF files and open in Bambu Studio, OrcaSlicer,",
+                "  PrusaSlicer and Cura alike.",
+                "",
+            ]
+
         lines += [
-            "HOW TO PRINT",
-            "-" * 68,
-            "  1. Extract this ZIP and open the Plates folder.",
-            "  2. Open ONE plate file, for example Plate_01.3mf, by",
-            "     double-clicking it or dragging it into your slicer.",
-            "  3. Everything is already arranged on the plate. Slice and print.",
-            "  4. Repeat for each plate.",
-            "",
-            "  Do NOT select all the plates at once. Each file is one plateful",
-            "  of parts; open them one at a time.",
-            "",
-            "  You do not need to press Auto Arrange. The parts are already",
+            "  You never need to press Auto Arrange: the parts are already",
             "  positioned, spaced and inside the printable area.",
             "",
         ]
@@ -202,6 +227,7 @@ class ZipService:
     def build(self, job: Job, geometry_paths: dict[str, Path],
               progress: Callable[[int, int], None] | None = None,
               *, plate_files: dict[int, Path] | None = None,
+              project_file: Path | None = None,
               include_stls: bool = False) -> ZipResult:
         """Write the print pack for ``job``.
 
@@ -234,6 +260,12 @@ class ZipService:
         # text members only.
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED,
                              allowZip64=True) as zf:
+            # The merged project sits at the top level: it is the single
+            # file that opens with every plate already set up.
+            if project_file is not None and project_file.exists():
+                _write_member(zf, f"{basename}/{project_file.name}", project_file)
+                written += 1
+
             # Pre-arranged plates first: this is the path most people want.
             for index in sorted(plate_files or {}):
                 source = plate_files[index]
@@ -266,8 +298,11 @@ class ZipService:
                         compress_type=zipfile.ZIP_DEFLATED)
             zf.writestr(f"{basename}/README.txt",
                         build_readme(job, written, len(printable), job.failed_parts,
-                                     plate_count=len(plate_files or {}),
-                                     include_stls=include_stls),
+                                     plate_count=len(job.plates),
+                                     include_stls=include_stls,
+                                     project_name=(project_file.name
+                                                   if project_file else None),
+                                     separate_plates=len(plate_files or {})),
                         compress_type=zipfile.ZIP_DEFLATED)
 
         size = zip_path.stat().st_size

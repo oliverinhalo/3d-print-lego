@@ -109,12 +109,29 @@ export function Completion({ job, failedParts, onRetry, onStartOver, retrying }:
 
       <div className="next-steps">
         <h4>Next steps</h4>
-        <ol>
-          <li>Extract the ZIP and open the <code>Plates</code> folder.</li>
-          <li>Open <strong>one</strong> plate file, e.g. <code>Plate_01.3mf</code>.</li>
-          <li>It opens already arranged — slice and print.</li>
-          <li>Repeat for each plate.</li>
-        </ol>
+        {job.project_file ? (
+          <ol>
+            <li>Extract the ZIP.</li>
+            <li>Open <code>{job.project_file}</code>.</li>
+            <li>
+              All {job.plate_count} plates are inside, each named after its
+              colour — switch between them in the slicer and print in turn.
+            </li>
+            {job.plate_output === 'both' && (
+              <li>
+                If your slicer will not open it, use the <code>Plates</code>{' '}
+                folder instead — one file per plate.
+              </li>
+            )}
+          </ol>
+        ) : (
+          <ol>
+            <li>Extract the ZIP and open the <code>Plates</code> folder.</li>
+            <li>Open <strong>one</strong> plate file, e.g. <code>Plate_01.3mf</code>.</li>
+            <li>It opens already arranged — slice and print.</li>
+            <li>Repeat for each plate.</li>
+          </ol>
+        )}
       </div>
 
       <div className="actions">

@@ -1,4 +1,4 @@
-import type { ColorMode, JobEvent, JobSummary, LegoSet, Options } from '../types'
+import type { ColorMode, JobEvent, JobSummary, LegoSet, Options, PlateOutput } from '../types'
 
 const BASE = '/api'
 
@@ -23,6 +23,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export interface GenerateOptions {
   color_mode?: ColorMode
   bed_preset?: string
+  plate_output?: PlateOutput
 }
 
 export function startGeneration(setNumber: string, options: GenerateOptions = {}) {

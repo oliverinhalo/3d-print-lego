@@ -35,9 +35,33 @@ class TestHappyPath:
     async def test_the_zip_holds_pre_arranged_plates(self, worker):
         job = await run_job(worker)
         with zipfile.ZipFile(job.zip_path) as zf:
-            plates = [n for n in zf.namelist() if n.endswith(".3mf")]
-        assert plates, "expected at least one build plate"
-        assert len(plates) == len(job.plates)
+            per_plate = [n for n in zf.namelist() if "/Plates/" in n and n.endswith(".3mf")]
+        assert len(per_plate) == len(job.plates)
+
+    async def test_the_zip_holds_one_merged_project_file(self, worker):
+        """Everything on named plates in a single file, by default."""
+        job = await run_job(worker)
+        with zipfile.ZipFile(job.zip_path) as zf:
+            top_level = [n for n in zf.namelist()
+                         if n.endswith(".3mf") and "/Plates/" not in n]
+        assert len(top_level) == 1
+        assert job.project_file and job.project_file in top_level[0]
+
+    async def test_separate_mode_writes_no_project_file(self, worker):
+        worker.settings.plate_output = "separate"
+        job = await run_job(worker)
+        with zipfile.ZipFile(job.zip_path) as zf:
+            top_level = [n for n in zf.namelist()
+                         if n.endswith(".3mf") and "/Plates/" not in n]
+        assert not top_level and job.project_file is None
+
+    async def test_project_mode_writes_no_per_plate_files(self, worker):
+        worker.settings.plate_output = "project"
+        job = await run_job(worker)
+        with zipfile.ZipFile(job.zip_path) as zf:
+            per_plate = [n for n in zf.namelist() if "/Plates/" in n]
+        assert not per_plate
+        assert job.project_file
 
     async def test_every_piece_lands_on_a_plate(self, worker):
         job = await run_job(worker)

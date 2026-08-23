@@ -138,6 +138,25 @@ every piece already positioned.
 Open one plate file. It is arranged, spaced and inside the printable area.
 Slice it. Move to the next plate. There is no Auto Arrange step.
 
+### One file or many
+
+| Mode | You get | Notes |
+|---|---|---|
+| **Both** *(default)* | A project file **and** a `Plates/` folder | Whichever your slicer prefers |
+| **One project file** | A single 3MF containing every plate | Each plate named after its colour; switch plates inside the slicer |
+| **A file per plate** | `Plates/Plate_01_Red.3mf`, … | Plain core 3MF — opens in any slicer |
+
+The project file carries Bambu Studio's `Metadata/model_settings.config`,
+which declares the plates and their names. Bambu decides which plate an
+instance belongs to by *where it sits in world space*, so each plate's pieces
+are written at that plate's world origin, reproducing the slicer's own grid
+arithmetic (`compute_colum_count` and `LOGICAL_PART_PLATE_GAP` from
+`PartPlate.hpp`). A project is capped at 36 plates, which is Bambu's own
+limit; past that the per-plate files are written instead.
+
+The per-plate files carry no slicer-specific metadata at all, which is why
+they are the safe fallback.
+
 3MF also removes the duplication: a plate with 25 identical 1x2 plates stores
 that mesh **once** and references it 25 times. A plate file is typically
 tens of kilobytes where the same pieces as STLs would be megabytes.
@@ -192,6 +211,7 @@ The settings worth knowing about:
 | `COLOR_MODE` | `family` | `none`, `family` or `exact` |
 | `PLATE_GAP_MM` | `3.0` | Gap between parts on a plate |
 | `BUILD_PLATES` | `true` | Write pre-arranged 3MF plates |
+| `PLATE_OUTPUT` | `both` | `separate`, `project` or `both` |
 | `INCLUDE_STLS` | `false` | Also write one STL per piece |
 | `SET_PROVIDER` | `rebrickable_csv` | `rebrickable_csv` or `rebrickable_api` |
 | `REBRICKABLE_API_KEY` | *(empty)* | Only for `rebrickable_api` |

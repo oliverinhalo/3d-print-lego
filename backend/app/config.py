@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     color_mode: str = "family"
     #: Write pre-arranged 3MF plate files into the download.
     build_plates: bool = True
+    #: How plate files are delivered:
+    #:   "separate" - one 3MF per plate (plain core 3MF, works everywhere)
+    #:   "project"  - a single 3MF holding every plate, named by colour
+    #:   "both"     - ship both, so either workflow is available
+    plate_output: str = "both"
     #: Also write one STL per physical piece. Off by default now that plates
     #: exist: a large set is hundreds of files that no slicer enjoys importing.
     include_stls: bool = False

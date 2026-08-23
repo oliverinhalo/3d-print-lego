@@ -19,12 +19,24 @@ A minimal, standard-conformant 3MF (an OPC/ZIP package)::
     _rels/.rels
     3D/3dmodel.model
 
-Deliberately no slicer-specific metadata: the core format is what every
-slicer reads, so the same file works in Bambu Studio, OrcaSlicer, PrusaSlicer
-and Cura.
+Two shapes of output are available:
+
+* **one file per plate** — plain core 3MF, no slicer-specific metadata, so it
+  opens the same way in Bambu Studio, OrcaSlicer, PrusaSlicer and Cura;
+* **one project holding every plate** — the same core geometry plus Bambu's
+  ``Metadata/model_settings.config``, which names each plate (by colour) and
+  lists the instances on it.
+
+For the project file the plate layout matters as much as the metadata:
+Bambu Studio assigns an instance to a plate by *where it is in world space*
+(``PartPlateList::reload_all_objects`` intersects each instance against each
+plate), so plate N's contents have to be written at plate N's world origin.
+That origin is reproduced from the slicer's own arithmetic — see
+``plate_origin`` below.
 """
 from __future__ import annotations
 
+import math
 import xml.sax.saxutils as saxutils
 import zipfile
 from pathlib import Path
@@ -54,6 +66,35 @@ RELS = f"""<?xml version="1.0" encoding="UTF-8"?>
 #: Vertices closer than this are treated as one. STL repeats every shared
 #: vertex per triangle, so welding cuts the vertex count roughly six-fold.
 WELD_TOLERANCE = 1e-4
+
+#: Gap between plates in the slicer's world grid, as a fraction of bed size.
+#: From PartPlate.hpp: LOGICAL_PART_PLATE_GAP = 1/5.
+PLATE_GAP_FRACTION = 1.0 / 5.0
+
+#: Bambu Studio refuses to hold more than this many plates in one project.
+MAX_PROJECT_PLATES = 36
+
+
+def plate_columns(count: int) -> int:
+    """Columns in the slicer's plate grid, matching ``compute_colum_count``.
+
+    Reproduced from PartPlate.hpp so our world offsets land on the same grid
+    the slicer builds; a mismatch would drop parts onto the wrong plate.
+    """
+    if count <= 0:
+        return 1
+    value = math.sqrt(count)
+    # C's round() goes half away from zero, unlike Python's banker's rounding.
+    rounded = math.floor(value + 0.5)
+    return int(rounded + 1) if value > rounded else int(rounded)
+
+
+def plate_origin(index: int, columns: int,
+                 bed_width: float, bed_depth: float) -> tuple[float, float]:
+    """World-space corner of plate ``index`` (0-based), as the slicer places it."""
+    row, column = divmod(index, max(columns, 1))
+    return (column * bed_width * (1.0 + PLATE_GAP_FRACTION),
+            -row * bed_depth * (1.0 + PLATE_GAP_FRACTION))
 
 
 def _weld(mesh: Mesh) -> tuple[list[tuple[float, float, float]], list[tuple[int, int, int]]]:
@@ -95,6 +136,33 @@ def _transform(x: float, y: float, z: float, rotated: bool) -> str:
     return " ".join([*rows, _number(x), _number(y), _number(z)])
 
 
+def _mesh_resources(keys: list[str], object_ids: dict[str, int],
+                    geometry_paths: dict[str, Path],
+                    name_for) -> list[str]:
+    """Emit one ``<object>`` per distinct shape.
+
+    Shapes are written once however many copies reference them, which is what
+    keeps a repetitive set small.
+    """
+    out: list[str] = []
+    for key in keys:
+        mesh = read_stl(geometry_paths[key])
+        vertices, triangles = _weld(mesh)
+        if not triangles:
+            continue
+        name = saxutils.quoteattr(name_for(key))
+        out.append(f'  <object id="{object_ids[key]}" type="model" name={name}>\n'
+                   '   <mesh>\n    <vertices>\n')
+        out.extend(
+            f'     <vertex x="{_number(v[0])}" y="{_number(v[1])}" z="{_number(v[2])}"/>\n'
+            for v in vertices)
+        out.append('    </vertices>\n    <triangles>\n')
+        out.extend(
+            f'     <triangle v1="{t[0]}" v2="{t[1]}" v3="{t[2]}"/>\n' for t in triangles)
+        out.append('    </triangles>\n   </mesh>\n  </object>\n')
+    return out
+
+
 def write_plate_3mf(plate: Plate, geometry_paths: dict[str, Path], destination: Path,
                     *, title: str = "") -> int:
     """Write one plate as a 3MF. Returns the file size in bytes.
@@ -122,20 +190,8 @@ def write_plate_3mf(plate: Plate, geometry_paths: dict[str, Path], destination: 
         parts.append(f' <metadata name="Title">{saxutils.escape(title)}</metadata>\n')
     parts.append(' <resources>\n')
 
-    for key in used_keys:
-        mesh = read_stl(geometry_paths[key])
-        vertices, triangles = _weld(mesh)
-        if not triangles:
-            continue
-        name = saxutils.quoteattr(_object_name(plate, key))
-        parts.append(f'  <object id="{object_ids[key]}" type="model" name={name}>\n   <mesh>\n    <vertices>\n')
-        parts.extend(
-            f'     <vertex x="{_number(v[0])}" y="{_number(v[1])}" z="{_number(v[2])}"/>\n'
-            for v in vertices)
-        parts.append('    </vertices>\n    <triangles>\n')
-        parts.extend(
-            f'     <triangle v1="{t[0]}" v2="{t[1]}" v3="{t[2]}"/>\n' for t in triangles)
-        parts.append('    </triangles>\n   </mesh>\n  </object>\n')
+    parts.extend(_mesh_resources(used_keys, object_ids, geometry_paths,
+                                 lambda key: _object_name(plate, key)))
 
     parts.append(' </resources>\n <build>\n')
     for placement in plate.placements:
@@ -173,3 +229,139 @@ def plate_filename(plate: Plate, total: int) -> str:
     if plate.group:
         stem = f"{stem}_{sanitize_filename(plate.group, max_length=24, fallback='')}"
     return f"{stem}.3mf"
+
+
+class TooManyPlates(ValueError):
+    """More plates than a single slicer project can hold."""
+
+
+def write_project_3mf(plates: list[Plate], geometry_paths: dict[str, Path],
+                      destination: Path, *, title: str = "") -> int:
+    """Write every plate into ONE project file, each on its own named plate.
+
+    The core ``3dmodel.model`` is standard 3MF, so the geometry loads
+    anywhere. On top of it sits ``Metadata/model_settings.config``, Bambu's
+    project sidecar, which declares the plates and names each one after its
+    colour group.
+
+    Positions matter as much as the metadata: the slicer decides which plate
+    an instance belongs to by intersecting it with each plate's area, so a
+    plate's pieces are written at that plate's world origin (see
+    ``plate_origin``) rather than all at the first plate.
+    """
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    if len(plates) > MAX_PROJECT_PLATES:
+        raise TooManyPlates(
+            f"{len(plates)} plates exceeds the {MAX_PROJECT_PLATES}-plate "
+            "limit of a single project file")
+
+    # One object per distinct shape across the whole project.
+    used_keys: list[str] = []
+    for plate in plates:
+        for placement in plate.placements:
+            key = placement.item.geometry_key
+            if key not in used_keys and key in geometry_paths:
+                used_keys.append(key)
+    object_ids = {key: number for number, key in enumerate(used_keys, start=1)}
+
+    names: dict[str, str] = {}
+    for plate in plates:
+        for placement in plate.placements:
+            names.setdefault(placement.item.geometry_key,
+                             f"{placement.item.part_num} {placement.item.name}"[:96])
+
+    model: list[str] = [
+        '<?xml version="1.0" encoding="UTF-8"?>\n',
+        f'<model unit="millimeter" xml:lang="en-US" xmlns="{CORE_NS}">\n',
+        ' <metadata name="Application">Brick Foundry</metadata>\n',
+    ]
+    if title:
+        model.append(f' <metadata name="Title">{saxutils.escape(title)}</metadata>\n')
+    model.append(' <resources>\n')
+    model.extend(_mesh_resources(used_keys, object_ids, geometry_paths,
+                                 lambda key: names.get(key, key)))
+    model.append(' </resources>\n <build>\n')
+
+    columns = plate_columns(len(plates))
+    bed_width = plates[0].bed_width if plates else 256.0
+    bed_depth = plates[0].bed_depth if plates else 256.0
+
+    # instance_id is the index of this item among items sharing an objectid,
+    # which is how the importer numbers instances as it reads the build list.
+    instance_counter: dict[int, int] = {}
+    plate_instances: list[list[tuple[int, int]]] = []
+
+    for index, plate in enumerate(plates):
+        offset_x, offset_y = plate_origin(index, columns, bed_width, bed_depth)
+        on_this_plate: list[tuple[int, int]] = []
+        for placement in plate.placements:
+            object_id = object_ids.get(placement.item.geometry_key)
+            if object_id is None:
+                continue
+            instance_id = instance_counter.get(object_id, 0)
+            instance_counter[object_id] = instance_id + 1
+            transform = _transform(offset_x + placement.x, offset_y + placement.y,
+                                   0.0, placement.rotated)
+            model.append(f'  <item objectid="{object_id}" transform="{transform}"/>\n')
+            on_this_plate.append((object_id, instance_id))
+        plate_instances.append(on_this_plate)
+
+    model.append(' </build>\n</model>\n')
+
+    settings = _model_settings(plates, object_ids, names, plate_instances)
+
+    with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED,
+                         compresslevel=6) as zf:
+        zf.writestr("[Content_Types].xml", CONTENT_TYPES)
+        zf.writestr("_rels/.rels", RELS)
+        zf.writestr("3D/3dmodel.model", "".join(model))
+        zf.writestr("Metadata/model_settings.config", settings)
+
+    return destination.stat().st_size
+
+
+def _model_settings(plates: list[Plate], object_ids: dict[str, int],
+                    names: dict[str, str],
+                    plate_instances: list[list[tuple[int, int]]]) -> str:
+    """Bambu's ``model_settings.config``: object names and plate contents.
+
+    Structure and attribute names follow the slicer's own exporter
+    (``bbs_3mf.cpp``): a ``<plate>`` carries ``plater_id`` and ``plater_name``
+    metadata and lists its contents as ``<model_instance>`` entries.
+    """
+    out: list[str] = ['<?xml version="1.0" encoding="UTF-8"?>\n', '<config>\n']
+
+    for key, object_id in object_ids.items():
+        out.append(f'  <object id="{object_id}">\n')
+        out.append(f'    <metadata key="name" value='
+                   f'{saxutils.quoteattr(names.get(key, key))}/>\n')
+        out.append('  </object>\n')
+
+    identify = 1
+    for index, plate in enumerate(plates):
+        # plater_id is 1-based; the plate is named after its colour group so
+        # the tab in the slicer reads "Red" rather than "Plate 3".
+        label = plate.group or f"Plate {plate.index}"
+        out.append('  <plate>\n')
+        out.append(f'    <metadata key="plater_id" value="{index + 1}"/>\n')
+        out.append(f'    <metadata key="plater_name" value={saxutils.quoteattr(label)}/>\n')
+        out.append('    <metadata key="locked" value="false"/>\n')
+        for object_id, instance_id in plate_instances[index]:
+            out.append('    <model_instance>\n')
+            out.append(f'      <metadata key="object_id" value="{object_id}"/>\n')
+            out.append(f'      <metadata key="instance_id" value="{instance_id}"/>\n')
+            out.append(f'      <metadata key="identify_id" value="{identify}"/>\n')
+            out.append('    </model_instance>\n')
+            identify += 1
+        out.append('  </plate>\n')
+
+    out.append('</config>\n')
+    return "".join(out)
+
+
+def project_filename(set_number: str) -> str:
+    from .normalize import sanitize_filename
+    safe = sanitize_filename(set_number, max_length=24, fallback="set")
+    return f"LEGO_{safe}_All_Plates.3mf"

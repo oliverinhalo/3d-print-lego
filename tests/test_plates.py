@@ -270,3 +270,138 @@ class TestThreeMF:
         plates, _ = pack_items([item(group="Red") for _ in range(5)],
                                bed_size("bambu_p1"), group_plates=True)
         assert "Red" in plate_filename(plates[0], 1)
+
+
+class TestProjectFile:
+    """The merged project: every plate in one file, each named by colour."""
+
+    @pytest.fixture
+    def project(self, tmp_path):
+        from app.services.threemf_service import write_project_3mf
+        stl = write_cube_stl(tmp_path / "cube.stl", size=10.0)
+        items = [item(w=10, d=10, h=10, key="fake:cube", group=group)
+                 for group in ("Red", "Blue", "Black") for _ in range(20)]
+        plates, _ = pack_items(items, bed_size("bambu_p1"), group_plates=True)
+        path = tmp_path / "project.3mf"
+        write_project_3mf(plates, {"fake:cube": stl}, path, title="Test")
+        return plates, path
+
+    def _model(self, path):
+        with zipfile.ZipFile(path) as zf:
+            return (ET.fromstring(zf.read("3D/3dmodel.model")),
+                    ET.fromstring(zf.read("Metadata/model_settings.config")))
+
+    def test_the_package_carries_both_the_model_and_the_plate_settings(self, project):
+        _plates, path = project
+        with zipfile.ZipFile(path) as zf:
+            names = zf.namelist()
+            assert zf.testzip() is None
+        assert "3D/3dmodel.model" in names
+        assert "Metadata/model_settings.config" in names
+        assert "[Content_Types].xml" in names
+
+    def test_one_plate_is_declared_per_packed_plate(self, project):
+        plates, path = project
+        _model, config = self._model(path)
+        assert len(config.findall("plate")) == len(plates)
+
+    def test_each_plate_is_named_after_its_colour(self, project):
+        plates, path = project
+        _model, config = self._model(path)
+        names = []
+        for plate in config.findall("plate"):
+            meta = {m.get("key"): m.get("value") for m in plate.findall("metadata")}
+            names.append(meta["plater_name"])
+        assert names == [p.group for p in plates]
+        assert set(names) == {"Red", "Blue", "Black"}
+
+    def test_plater_ids_are_sequential_from_one(self, project):
+        _plates, path = project
+        _model, config = self._model(path)
+        ids = [int({m.get("key"): m.get("value")
+                    for m in p.findall("metadata")}["plater_id"])
+               for p in config.findall("plate")]
+        assert ids == list(range(1, len(ids) + 1))
+
+    def test_every_piece_is_listed_on_exactly_one_plate(self, project):
+        plates, path = project
+        _model, config = self._model(path)
+        listed = sum(len(p.findall("model_instance")) for p in config.findall("plate"))
+        assert listed == sum(p.count for p in plates)
+
+    def test_pieces_sit_inside_their_own_plate_area(self, project):
+        """The slicer assigns plates by geometry, so this is what decides it."""
+        from app.services.threemf_service import plate_columns, plate_origin
+
+        plates, path = project
+        model, _config = self._model(path)
+        items = model.findall(".//c:build/c:item", NS)
+        columns = plate_columns(len(plates))
+
+        index = 0
+        for number, plate in enumerate(plates):
+            origin_x, origin_y = plate_origin(number, columns,
+                                              plate.bed_width, plate.bed_depth)
+            for _placement in plate.placements:
+                values = [float(v) for v in items[index].get("transform").split()]
+                x, y = values[9], values[10]
+                assert origin_x - 1e-6 <= x <= origin_x + plate.bed_width + 1e-6
+                assert origin_y - 1e-6 <= y <= origin_y + plate.bed_depth + 1e-6
+                index += 1
+
+    def test_plates_do_not_overlap_each_other_in_world_space(self, project):
+        from app.services.threemf_service import plate_columns, plate_origin
+
+        plates, _path = project
+        columns = plate_columns(len(plates))
+        boxes = []
+        for number, plate in enumerate(plates):
+            ox, oy = plate_origin(number, columns, plate.bed_width, plate.bed_depth)
+            boxes.append((ox, oy, ox + plate.bed_width, oy + plate.bed_depth))
+        for i in range(len(boxes)):
+            for j in range(i + 1, len(boxes)):
+                a, b = boxes[i], boxes[j]
+                assert not (a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3])
+
+    def test_instance_ids_follow_the_build_item_order(self, project):
+        """The importer numbers instances as it reads build items."""
+        _plates, path = project
+        model, config = self._model(path)
+
+        seen: dict[int, int] = {}
+        expected = []
+        for build_item in model.findall(".//c:build/c:item", NS):
+            object_id = int(build_item.get("objectid"))
+            expected.append((object_id, seen.get(object_id, 0)))
+            seen[object_id] = seen.get(object_id, 0) + 1
+
+        declared = []
+        for plate in config.findall("plate"):
+            for instance in plate.findall("model_instance"):
+                meta = {m.get("key"): m.get("value") for m in instance.findall("metadata")}
+                declared.append((int(meta["object_id"]), int(meta["instance_id"])))
+        assert declared == expected
+
+    def test_geometry_is_still_shared_across_plates(self, project):
+        plates, path = project
+        model, _config = self._model(path)
+        assert len(model.findall(".//c:resources/c:object", NS)) == 1
+        assert len(model.findall(".//c:build/c:item", NS)) == sum(p.count for p in plates)
+
+    def test_too_many_plates_is_refused_rather_than_written_wrong(self, tmp_path):
+        from app.services.threemf_service import (MAX_PROJECT_PLATES, TooManyPlates,
+                                                  write_project_3mf)
+        stl = write_cube_stl(tmp_path / "cube.stl")
+        items = [item(w=10, d=10, h=10, key="fake:cube", group=f"G{i}")
+                 for i in range(MAX_PROJECT_PLATES + 5)]
+        plates, _ = pack_items(items, bed_size("bambu_p1"), group_plates=True)
+        assert len(plates) > MAX_PROJECT_PLATES
+        with pytest.raises(TooManyPlates):
+            write_project_3mf(plates, {"fake:cube": stl}, tmp_path / "big.3mf")
+
+    def test_grid_matches_the_slicer_arithmetic(self):
+        from app.services.threemf_service import plate_columns
+        # compute_colum_count from PartPlate.hpp
+        for count, expected in [(1, 1), (2, 2), (4, 2), (5, 3), (9, 3),
+                                (10, 4), (16, 4), (17, 5), (25, 5), (36, 6)]:
+            assert plate_columns(count) == expected

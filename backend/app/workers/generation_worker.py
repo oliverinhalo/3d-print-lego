@@ -32,7 +32,9 @@ from ..services.cache_service import CacheService
 from ..services.color_service import ColorMode, ColorService, group_key, group_swatch
 from ..services.job_service import JobManager
 from ..services.plate_service import PackItem, Plate, bed_size, pack_items
-from ..services.threemf_service import plate_filename, write_plate_3mf
+from ..services.threemf_service import (TooManyPlates, plate_filename,
+                                        project_filename, write_plate_3mf,
+                                        write_project_3mf)
 from ..services.zip_service import ZipService
 
 log = logging.getLogger(__name__)
@@ -148,6 +150,7 @@ class GenerationWorker:
         # 6. arrange the pieces onto build plates -----------------------------
         self._set_stage(job, Stage.ARRANGING)
         plate_files: dict[int, Path] = {}
+        project: Path | None = None
         if self.settings.build_plates:
             plates, oversized = await asyncio.to_thread(self._arrange, job, geometry_paths)
             job.plates = plates
@@ -155,14 +158,17 @@ class GenerationWorker:
             self._emit(job, "plates_ready", plate_count=len(plates),
                        plates=[p.to_dict() for p in plates],
                        oversized=sorted({i.part_num for i in oversized}))
-            plate_files = await asyncio.to_thread(self._write_plates, job, geometry_paths)
+            plate_files, project = await asyncio.to_thread(
+                self._write_plates, job, geometry_paths)
+            job.project_file = project.name if project else None
 
         # 7. duplicate per quantity and build the ZIP -------------------------
         self._set_stage(job, Stage.DUPLICATING,
                         files=sum(p.quantity for p in job.parts.values()
                                   if p.part_num in geometry_paths))
         self._set_stage(job, Stage.BUILDING_ZIP)
-        result = await asyncio.to_thread(self._build_zip, job, geometry_paths, plate_files)
+        result = await asyncio.to_thread(self._build_zip, job, geometry_paths,
+                                         plate_files, project)
 
         job.zip_path = str(result.path)
         job.zip_name = result.name
@@ -311,9 +317,10 @@ class GenerationWorker:
         raise last_error or RuntimeError("conversion failed")
 
     def _build_zip(self, job: Job, geometry_paths: dict[str, Path],
-                   plate_files: dict[int, Path] | None = None):
+                   plate_files: dict[int, Path] | None = None,
+                   project_file: Path | None = None):
         return self.zips.build(
-            job, geometry_paths, plate_files=plate_files,
+            job, geometry_paths, plate_files=plate_files, project_file=project_file,
             include_stls=self.settings.include_stls,
             progress=lambda written, total: self._emit(
                 job, "zip_progress", written=written, total=total))
@@ -361,8 +368,15 @@ class GenerationWorker:
             plates = plates[:self.settings.max_plates]
         return plates, oversized
 
-    def _write_plates(self, job: Job, geometry_paths: dict[str, Path]) -> dict[int, Path]:
-        """Write one 3MF per plate into the job's working directory."""
+    def _write_plates(self, job: Job,
+                      geometry_paths: dict[str, Path]) -> tuple[dict[int, Path], Path | None]:
+        """Write the plate files for this job.
+
+        Depending on ``plate_output`` that is one 3MF per plate, a single
+        project holding every plate, or both. Both is the default: the
+        per-plate files are plain core 3MF that any slicer reads, while the
+        project file additionally carries Bambu's plate metadata.
+        """
         by_key: dict[str, Path] = {}
         for part in job.parts.values():
             if part.geometry and part.part_num in geometry_paths:
@@ -370,20 +384,57 @@ class GenerationWorker:
 
         directory = self.zips.job_directory(job.id) / "plates"
         directory.mkdir(parents=True, exist_ok=True)
-        written: dict[int, Path] = {}
         title = job.lego_set.name if job.lego_set else job.query
+        mode = job.plate_output or self.settings.plate_output
 
-        for plate in job.plates:
-            name = plate_filename(plate, len(job.plates))
-            path = directory / name
+        written: dict[int, Path] = {}
+        if mode in ("separate", "both"):
+            for plate in job.plates:
+                name = plate_filename(plate, len(job.plates))
+                path = directory / name
+                try:
+                    write_plate_3mf(plate, by_key, path,
+                                    title=f"{title} - plate {plate.index}")
+                except Exception:                              # noqa: BLE001
+                    log.exception("failed to write plate %d for job %s",
+                                  plate.index, job.id)
+                    continue
+                written[plate.index] = path
+                self._emit(job, "plate_written", index=plate.index, name=name,
+                           total=len(job.plates))
+
+        project: Path | None = None
+        if mode in ("project", "both") and job.plates:
+            number = job.lego_set.display_number if job.lego_set else "set"
+            path = directory / project_filename(number)
             try:
-                write_plate_3mf(plate, by_key, path, title=f"{title} - plate {plate.index}")
+                write_project_3mf(job.plates, by_key, path, title=title)
+                project = path
+            except TooManyPlates as exc:
+                # Falling back is better than failing: the per-plate files
+                # cover the same job without a plate limit.
+                log.warning("job %s: %s", job.id, exc)
+                self._emit(job, "project_skipped", reason=str(exc))
+                if not written:
+                    written = self._write_separate_fallback(job, by_key, directory, title)
             except Exception:                                  # noqa: BLE001
-                log.exception("failed to write plate %d for job %s", plate.index, job.id)
+                log.exception("failed to write the project file for job %s", job.id)
+
+        return written, project
+
+    def _write_separate_fallback(self, job: Job, by_key: dict[str, Path],
+                                 directory: Path, title: str) -> dict[int, Path]:
+        """Write per-plate files after the merged project proved impossible."""
+        written: dict[int, Path] = {}
+        for plate in job.plates:
+            path = directory / plate_filename(plate, len(job.plates))
+            try:
+                write_plate_3mf(plate, by_key, path,
+                                title=f"{title} - plate {plate.index}")
+            except Exception:                                  # noqa: BLE001
+                log.exception("failed to write plate %d", plate.index)
                 continue
             written[plate.index] = path
-            self._emit(job, "plate_written", index=plate.index, name=name,
-                       total=len(job.plates))
         return written
 
     # --- retry of failed parts -------------------------------------------

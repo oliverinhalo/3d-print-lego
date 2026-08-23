@@ -1,25 +1,27 @@
-import type { ColorMode, Options } from '../types'
+import type { ColorMode, Options, PlateOutput } from '../types'
 
 interface Props {
   options: Options | null
   colorMode: ColorMode
   bedPreset: string
+  plateOutput: PlateOutput
   onColorMode: (mode: ColorMode) => void
   onBedPreset: (preset: string) => void
+  onPlateOutput: (output: PlateOutput) => void
 }
 
 const MODES: ColorMode[] = ['none', 'family', 'exact']
 
 /**
- * The only two choices that change the output, kept behind a disclosure so
+ * The handful of choices that change the output, kept behind a disclosure so
  * the default path stays a set number and one button.
  *
  * Colour grouping is a slider rather than a dropdown because the three
  * options are a spectrum — from "ignore colour, fewest plates" to "one
  * plate per exact colour" — and a slider shows that ordering at a glance.
  */
-export function PrintOptions({ options, colorMode, bedPreset,
-                               onColorMode, onBedPreset }: Props) {
+export function PrintOptions({ options, colorMode, bedPreset, plateOutput,
+                               onColorMode, onBedPreset, onPlateOutput }: Props) {
   const modeIndex = Math.max(0, MODES.indexOf(colorMode))
   const current = options?.color_modes.find(m => m.id === colorMode)
 
@@ -59,6 +61,25 @@ export function PrintOptions({ options, colorMode, bedPreset,
         <p className="option-detail" id="colour-mode-detail">
           {current?.detail ?? 'All reds together, all blues together'}
         </p>
+      </div>
+
+      <div className="option-block">
+        <div className="option-head">
+          <label>Files</label>
+        </div>
+        <div className="choice-group">
+          {options?.plate_outputs.map(choice => (
+            <button
+              type="button"
+              key={choice.id}
+              className={`choice${choice.id === plateOutput ? ' on' : ''}`}
+              onClick={() => onPlateOutput(choice.id)}
+            >
+              <strong>{choice.label}</strong>
+              <span>{choice.detail}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="option-block">

@@ -599,3 +599,19 @@ a { color: var(--accent-soft); }
 }
 .pager-info { color: var(--text-muted); font-size: 13.5px; font-variant-numeric: tabular-nums; }
 .btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* --- segmented choice (file layout) -------------------------------------- */
+.choice-group { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.choice {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  padding: 9px 12px; text-align: left; border-radius: var(--radius-sm);
+  background: var(--bg-input); border: 1px solid var(--border);
+  color: var(--text-muted); transition: all 0.16s;
+}
+.choice:hover { border-color: var(--border-strong); color: var(--text); }
+.choice strong { font-size: 13.5px; font-weight: 560; color: inherit; }
+.choice span { font-size: 12px; color: var(--text-dim); }
+.choice.on {
+  border-color: var(--accent); background: #ff5c2b14; color: var(--text);
+}
+.choice.on strong { color: var(--accent); }

@@ -54,6 +54,9 @@ class GenerateRequest(BaseModel):
                           'group similar colours, or one group per exact colour')
     bed_preset: str | None = Field(
         None, max_length=32, description="Printer whose bed size to arrange for")
+    plate_output: Literal["separate", "project", "both"] | None = Field(
+        None, description='File layout: one 3MF per plate, a single project '
+                          'holding every plate, or both')
 
 
 class GenerateResponse(BaseModel):
@@ -86,7 +89,8 @@ async def generate(payload: GenerateRequest, request: Request,
     job = Job(query=payload.set_number.strip(), set_num=set_num,
               include_spares=payload.include_spares,
               color_mode=payload.color_mode or settings.color_mode,
-              bed_preset=bed)
+              bed_preset=bed,
+              plate_output=payload.plate_output or settings.plate_output)
     context.jobs.register(job)
 
     task = asyncio.create_task(context.worker.run(job))
@@ -288,6 +292,14 @@ async def options(context: AppContext = Depends(get_context)) -> dict:
              "label": key.replace("_", " ").title()}
             for key, size in BED_PRESETS.items()
         ],
+        "plate_outputs": [
+            {"id": "both", "label": "Both",
+             "detail": "One project file plus a file per plate"},
+            {"id": "project", "label": "One project file",
+             "detail": "Every plate in a single file, named by colour"},
+            {"id": "separate", "label": "A file per plate",
+             "detail": "Plain 3MF, opens in any slicer"},
+        ],
         "color_modes": [
             {"id": "none", "label": "Any colour",
              "detail": "Pack by size only - fewest plates"},
@@ -299,6 +311,7 @@ async def options(context: AppContext = Depends(get_context)) -> dict:
         "defaults": {
             "bed_preset": context.settings.bed_preset,
             "color_mode": context.settings.color_mode,
+            "plate_output": context.settings.plate_output,
         },
     }
 

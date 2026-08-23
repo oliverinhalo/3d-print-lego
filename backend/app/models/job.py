@@ -78,9 +78,12 @@ class Job:
     # --- options chosen for this job ---
     color_mode: str = "family"
     bed_preset: str = "bambu_p1"
+    #: None means "use the server default"; the API fills it in per job.
+    plate_output: str | None = None
     # --- results of arranging ---
     plates: list = field(default_factory=list)      # list[Plate]
     oversized: list = field(default_factory=list)   # pieces too big for the bed
+    project_file: str | None = None                 # name of the merged project
 
     # --- derived counters -------------------------------------------------
     @property
@@ -122,6 +125,8 @@ class Job:
             "files_written": self.files_written,
             "color_mode": self.color_mode,
             "bed_preset": self.bed_preset,
+            "plate_output": self.plate_output,
+            "project_file": self.project_file,
             "plate_count": len(self.plates),
             "plates": [p.to_dict() for p in self.plates],
             "oversized": sorted({i.part_num for i in self.oversized}),

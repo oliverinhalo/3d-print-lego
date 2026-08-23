@@ -16,6 +16,7 @@ export interface LegoSet {
 }
 
 export type ColorMode = 'none' | 'family' | 'exact'
+export type PlateOutput = 'separate' | 'project' | 'both'
 
 export interface PlateInfo {
   index: number
@@ -38,10 +39,17 @@ export interface ColorModeOption {
   detail: string
 }
 
+export interface PlateOutputOption {
+  id: PlateOutput
+  label: string
+  detail: string
+}
+
 export interface Options {
   printers: Printer[]
   color_modes: ColorModeOption[]
-  defaults: { bed_preset: string; color_mode: ColorMode }
+  plate_outputs: PlateOutputOption[]
+  defaults: { bed_preset: string; color_mode: ColorMode; plate_output: PlateOutput }
 }
 
 export interface ColorCount {
@@ -86,6 +94,8 @@ export interface JobSummary {
   plate_count: number
   plates: PlateInfo[]
   oversized: string[]
+  plate_output: PlateOutput
+  project_file: string | null
   error: string | null
   created_at: number
   finished_at: number | null

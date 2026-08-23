@@ -121,6 +121,7 @@ All optional. Edit the `environment:` block in `docker-compose.yml`, then run
 | `PART_SCALE` | `1.0` | `1.0` = exact LDraw size (2x4 brick is 32.00 mm). `0.994` = real LEGO size (31.80 mm), which fits better against genuine bricks. |
 | `BED_PRESET` | `bambu_p1` | Printer bed parts are arranged for. Also selectable per job in the UI. |
 | `COLOR_MODE` | `family` | `none` (fewest plates), `family` (similar colours together), `exact` (one group per LEGO colour). |
+| `PLATE_OUTPUT` | `both` | `project` = one file with every plate (named by colour), `separate` = one file per plate, `both` = ship both. |
 | `INCLUDE_STLS` | `false` | Also write one STL per piece. Off by default — that is hundreds of files. |
 | `MAX_CONCURRENT_DOWNLOADS` | `8` | Parts converted at once. Raise on a fast server. |
 | `MAX_PIECES_PER_JOB` | `6000` | Rejects sets larger than this. |

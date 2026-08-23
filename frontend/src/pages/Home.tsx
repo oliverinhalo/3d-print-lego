@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { PrintOptions } from '../components/PrintOptions'
 import { getOptions, searchSets, startGeneration } from '../lib/api'
-import type { ColorMode, LegoSet, Options } from '../types'
+import type { ColorMode, LegoSet, Options, PlateOutput } from '../types'
 
 const STEPS = [
   { num: '01', label: 'Enter your set', detail: 'Any LEGO set number' },
@@ -26,6 +26,7 @@ export function Home({ onStarted, onBrowse, preset }: HomeProps) {
   const [options, setOptions] = useState<Options | null>(null)
   const [colorMode, setColorMode] = useState<ColorMode>('family')
   const [bedPreset, setBedPreset] = useState('bambu_p1')
+  const [plateOutput, setPlateOutput] = useState<PlateOutput>('both')
   const [showOptions, setShowOptions] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -39,6 +40,7 @@ export function Home({ onStarted, onBrowse, preset }: HomeProps) {
         setOptions(loaded)
         setColorMode(loaded.defaults.color_mode)
         setBedPreset(loaded.defaults.bed_preset)
+        setPlateOutput(loaded.defaults.plate_output)
       })
       .catch(() => { /* the defaults above are fine on their own */ })
   }, [])
@@ -57,6 +59,7 @@ export function Home({ onStarted, onBrowse, preset }: HomeProps) {
       const { job_id } = await startGeneration(query, {
         color_mode: colorMode,
         bed_preset: bedPreset,
+        plate_output: plateOutput,
       })
       onStarted(job_id)
     } catch (err) {
@@ -120,8 +123,10 @@ export function Home({ onStarted, onBrowse, preset }: HomeProps) {
               options={options}
               colorMode={colorMode}
               bedPreset={bedPreset}
+              plateOutput={plateOutput}
               onColorMode={setColorMode}
               onBedPreset={setBedPreset}
+              onPlateOutput={setPlateOutput}
             />
           )}
         </form>
