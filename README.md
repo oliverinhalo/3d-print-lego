@@ -40,6 +40,19 @@ substantially faster than the first.
 
 ## 2. Installation
 
+### With Docker (simplest)
+
+One file, one command. The container downloads its own data on first start.
+
+```bash
+docker compose up -d
+```
+
+Choose your port on the `ports:` line of `docker-compose.yml`. Running on
+Windows Server behind nginx: see [docs/DEPLOY-WINDOWS.md](docs/DEPLOY-WINDOWS.md).
+
+### From source
+
 Requirements: **Python 3.10+** and **Node 18+** (Node only to build the UI).
 
 ```bash
@@ -52,17 +65,22 @@ pip install -r requirements.txt
 
 cp .env.example .env                 # optional: every default already works
 
-python scripts/bootstrap_data.py     # one-time, downloads ~150 MB
-
 npm --prefix frontend install
 npm --prefix frontend run build
 
 python run.py                        # → http://127.0.0.1:8000
 ```
 
-`bootstrap_data.py` downloads the two data sources described below and
-imports the catalogue into SQLite (about 1.7 million rows, ~8 seconds). It
-is safe to re-run; `--skip-existing` keeps what you already have.
+On first start `run.py` downloads the two data sources described below and
+imports the catalogue into SQLite (~150 MB, about 1.7 million rows). To do it
+as an explicit step instead — useful if you want to watch the progress, or to
+refresh the data later — run:
+
+```bash
+python scripts/bootstrap_data.py     # safe to re-run; --skip-existing keeps what you have
+```
+
+Set `AUTO_BOOTSTRAP=false` to turn the automatic download off entirely.
 
 ### Development
 
@@ -324,11 +342,23 @@ python run.py --host 0.0.0.0 --port 8000
 Put nginx or Caddy in front for TLS. For SSE, disable proxy buffering
 (`proxy_buffering off;`); the app already sends `X-Accel-Buffering: no`.
 
-Docker is supported but optional:
+### Docker (recommended for a server)
+
+One file, one command — the container downloads its own data on first start:
 
 ```bash
-docker compose up --build
+docker compose up -d
 ```
+
+Set your port on the `ports:` line in `docker-compose.yml` (change only the
+left number; the right side stays `8000`). First start takes a few minutes
+while it fetches ~150 MB; restarts take seconds because the data lives in a
+named volume.
+
+Running it on **Windows Server behind nginx** is covered step by step in
+[docs/DEPLOY-WINDOWS.md](docs/DEPLOY-WINDOWS.md), including the nginx block —
+note that `proxy_buffering off` is required or the live progress stream will
+appear frozen.
 
 Keep `--workers 1` unless you add a shared job store: jobs live in the
 process that created them.

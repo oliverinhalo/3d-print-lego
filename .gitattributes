@@ -1,0 +1,16 @@
+# Keep LF inside files that run in the Linux container, even when the
+# repository is cloned on Windows with core.autocrlf=true. A CRLF shell
+# script fails with "exec format error" inside the image.
+* text=auto eol=lf
+*.sh   text eol=lf
+*.py   text eol=lf
+Dockerfile text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+# Binary assets must never be line-ending converted.
+*.png  binary
+*.jpg  binary
+*.stl  binary
+*.zip  binary
+*.dat  binary
