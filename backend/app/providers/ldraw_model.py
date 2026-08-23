@@ -110,4 +110,6 @@ class LDrawModelProvider(ModelProvider):
             dimensions=result.validation.dimensions,
             warnings=result.validation.warnings,
             source_version=self.source_version,
+            volume_mm3=abs(result.mesh.volume()),
+            area_mm2=result.mesh.surface_area(),
         )

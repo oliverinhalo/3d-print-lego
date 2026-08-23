@@ -65,12 +65,31 @@ class Settings(BaseSettings):
     #:   "separate" - one 3MF per plate (plain core 3MF, works everywhere)
     #:   "project"  - a single 3MF holding every plate, named by colour
     #:   "both"     - ship both, so either workflow is available
-    plate_output: str = "both"
+    #:
+    #: Default is "separate": the per-plate files are plain core 3MF and are
+    #: confirmed working, whereas the single-project format is Bambu-specific
+    #: and still being verified against real slicer behaviour.
+    plate_output: str = "separate"
     #: Also write one STL per physical piece. Off by default now that plates
     #: exist: a large set is hundreds of files that no slicer enjoys importing.
     include_stls: bool = False
     #: Refuse to build more than this many plates in one job.
     max_plates: int = Field(default=60, ge=1)
+
+    # --- print estimates ---
+    #: Slicing profile the filament/time estimate assumes. Change these to
+    #: match your own profile, then the numbers track your real prints.
+    layer_height_mm: float = Field(default=0.2, gt=0)
+    wall_count: int = Field(default=2, ge=1, le=10)
+    line_width_mm: float = Field(default=0.42, gt=0)
+    infill_percent: float = Field(default=15.0, ge=0, le=100)
+    #: PLA 1.24, PETG 1.27, ABS 1.04 g/cm3.
+    filament_density: float = Field(default=1.24, gt=0)
+    filament_price_per_kg: float = Field(default=20.0, ge=0)
+    #: Average volumetric flow actually achieved. Calibrate from one real
+    #: slice: if the slicer says half our time, double this.
+    flow_rate_mm3_s: float = Field(default=8.0, gt=0)
+    currency: str = "£"
 
     # --- providers ---
     set_provider: str = "rebrickable_csv"

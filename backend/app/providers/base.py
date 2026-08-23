@@ -106,11 +106,12 @@ class ModelResult:
     """Outcome of building one STL."""
 
     __slots__ = ("model_id", "path", "size_bytes", "triangles", "dimensions",
-                 "warnings", "source_version")
+                 "warnings", "source_version", "volume_mm3", "area_mm2")
 
     def __init__(self, model_id: str, path: Path, size_bytes: int, triangles: int,
                  dimensions: tuple[float, float, float], warnings: list[str],
-                 source_version: str):
+                 source_version: str, volume_mm3: float = 0.0,
+                 area_mm2: float = 0.0):
         self.model_id = model_id
         self.path = path
         self.size_bytes = size_bytes
@@ -118,6 +119,9 @@ class ModelResult:
         self.dimensions = dimensions
         self.warnings = warnings
         self.source_version = source_version
+        # Solid volume and surface area, used for filament estimates.
+        self.volume_mm3 = volume_mm3
+        self.area_mm2 = area_mm2
 
 
 class STLProvider(ModelProvider):

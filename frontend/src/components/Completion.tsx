@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { EstimatePanel } from './EstimatePanel'
 import { downloadUrl } from '../lib/api'
 import type { JobSummary, Part } from '../types'
 
@@ -86,6 +87,8 @@ export function Completion({ job, failedParts, onRetry, onStartOver, retrying }:
         </div>
       )}
 
+      {job.estimate && <EstimatePanel estimate={job.estimate} />}
+
       {job.plates?.length > 0 && (
         <div className="plates-panel">
           <h4>Build plates</h4>
@@ -98,8 +101,14 @@ export function Completion({ job, failedParts, onRetry, onStartOver, retrying }:
               <div className="plate-chip" key={plate.index}>
                 <span className="plate-num">{plate.index}</span>
                 <span className="plate-meta">
-                  <strong>{plate.group || 'Any colour'}</strong>
-                  <span>{plate.count} pieces · {plate.fill_percent}% full</span>
+                  <strong>{plate.label || plate.group || 'Any colour'}</strong>
+                  <span>
+                    {plate.count} pieces
+                    {job.estimate?.plates?.[String(plate.index)] && (
+                      <> · {job.estimate.plates[String(plate.index)].grams.toFixed(0)}g
+                        {' · '}{job.estimate.plates[String(plate.index)].time_text}</>
+                    )}
+                  </span>
                 </span>
               </div>
             ))}

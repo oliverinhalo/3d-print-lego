@@ -472,3 +472,82 @@ class TestProjectFile:
         for count, expected in [(1, 1), (2, 2), (4, 2), (5, 3), (9, 3),
                                 (10, 4), (16, 4), (17, 5), (25, 5), (36, 6)]:
             assert plate_columns(count) == expected
+
+
+class TestEstimates:
+    """Filament, cost and time figures."""
+
+    def _profile(self):
+        from app.services.estimate_service import PrintProfile
+        return PrintProfile()
+
+    def test_a_thin_walled_part_prints_solid(self):
+        """LEGO elements are thinner than two perimeters, so no infill saving."""
+        from app.services.estimate_service import solid_fraction
+        # 1.5 mm wall: volume/area ratio of a real 2x4 brick.
+        assert solid_fraction(2862.7, 3824.3, self._profile()) < 1.0
+        # A genuinely thin sheet is all perimeter.
+        assert solid_fraction(100.0, 400.0, self._profile()) == 1.0
+
+    def test_a_chunky_part_is_mostly_infill(self):
+        from app.services.estimate_service import solid_fraction
+        # A 50 mm cube: volume 125000, area 15000 -> thickness 16.7 mm.
+        fraction = solid_fraction(125000.0, 15000.0, self._profile())
+        assert 0.0 < fraction < 0.3
+
+    def test_a_brick_weighs_about_what_a_real_one_does(self):
+        """A printed 2x4 brick should land near the 2.3 g of a moulded one."""
+        from app.services.estimate_service import estimate_part
+        estimate = estimate_part(2862.7, 3824.3, 11.2, 1, self._profile())
+        assert 1.5 < estimate.grams(self._profile()) < 3.0
+
+    def test_quantity_scales_everything(self):
+        from app.services.estimate_service import estimate_part
+        one = estimate_part(2862.7, 3824.3, 11.2, 1, self._profile())
+        ten = estimate_part(2862.7, 3824.3, 11.2, 10, self._profile())
+        assert ten.material_mm3 == pytest.approx(one.material_mm3 * 10)
+        assert ten.seconds == pytest.approx(one.seconds * 10)
+        assert ten.pieces == 10
+
+    def test_zero_quantity_costs_nothing(self):
+        from app.services.estimate_service import estimate_part
+        estimate = estimate_part(2862.7, 3824.3, 11.2, 0, self._profile())
+        assert estimate.material_mm3 == 0 and estimate.seconds == 0
+
+    def test_missing_geometry_does_not_explode(self):
+        from app.services.estimate_service import estimate_part
+        assert estimate_part(0.0, 0.0, 0.0, 5, self._profile()).grams(self._profile()) == 0
+
+    def test_cost_follows_price_and_weight(self):
+        from app.services.estimate_service import PrintProfile, estimate_part
+        cheap = PrintProfile(price_per_kg=10.0)
+        dear = PrintProfile(price_per_kg=40.0)
+        volume, area = 2862.7, 3824.3
+        assert (estimate_part(volume, area, 11.2, 100, dear).cost(dear)
+                == pytest.approx(estimate_part(volume, area, 11.2, 100, cheap).cost(cheap) * 4))
+
+    def test_estimates_add_up(self):
+        from app.services.estimate_service import estimate_total, estimate_part
+        parts = [(2862.7, 3824.3, 11.2, 3), (215.0, 302.7, 4.8, 10)]
+        total = estimate_total(parts, self._profile())
+        expected = sum(estimate_part(*p, self._profile()).material_mm3 for p in parts)
+        assert total.material_mm3 == pytest.approx(expected)
+        assert total.pieces == 13
+
+    @pytest.mark.parametrize("seconds,expected", [
+        (30, "0 m"), (90, "1 m"), (3600, "1 h"), (3900, "1 h 5 m"),
+        (86400, "1 d"), (90000, "1 d 1 h"),
+    ])
+    def test_durations_read_naturally(self, seconds, expected):
+        from app.services.estimate_service import format_duration
+        assert format_duration(seconds) == expected
+
+    def test_the_reported_figures_are_self_consistent(self):
+        from app.services.estimate_service import estimate_part
+        profile = self._profile()
+        estimate = estimate_part(2862.7, 3824.3, 11.2, 50, profile)
+        data = estimate.to_dict(profile)
+        assert data["grams"] == pytest.approx(estimate.grams(profile), abs=0.1)
+        assert data["cost"] == pytest.approx(estimate.grams(profile) / 1000 * 20, abs=0.01)
+        assert data["metres"] > 0
+        assert data["currency"] == "£"

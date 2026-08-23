@@ -39,6 +39,29 @@ class Mesh:
         lo, hi = self.bounds()
         return (hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2])
 
+    def volume(self) -> float:
+        """Signed volume enclosed by the surface, via the divergence theorem.
+
+        Positive for outward-facing triangles. Used for filament estimates,
+        so the absolute value is what callers want.
+        """
+        total = 0.0
+        for a, b, c in self.triangles:
+            total += (a[0] * (b[1] * c[2] - b[2] * c[1])
+                      - a[1] * (b[0] * c[2] - b[2] * c[0])
+                      + a[2] * (b[0] * c[1] - b[1] * c[0]))
+        return total / 6.0
+
+    def surface_area(self) -> float:
+        """Total triangle area."""
+        total = 0.0
+        for a, b, c in self.triangles:
+            ux, uy, uz = b[0] - a[0], b[1] - a[1], b[2] - a[2]
+            vx, vy, vz = c[0] - a[0], c[1] - a[1], c[2] - a[2]
+            cx, cy, cz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+            total += math.sqrt(cx * cx + cy * cy + cz * cz) / 2.0
+        return total
+
     def has_non_finite(self) -> bool:
         return any(not math.isfinite(c) for tri in self.triangles for v in tri for c in v)
 

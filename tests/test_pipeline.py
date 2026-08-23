@@ -39,7 +39,8 @@ class TestHappyPath:
         assert len(per_plate) == len(job.plates)
 
     async def test_the_zip_holds_one_merged_project_file(self, worker):
-        """Everything on named plates in a single file, by default."""
+        """Opt-in: everything on named plates in a single file."""
+        worker.settings.plate_output = "project"
         job = await run_job(worker)
         with zipfile.ZipFile(job.zip_path) as zf:
             top_level = [n for n in zf.namelist()
@@ -47,8 +48,8 @@ class TestHappyPath:
         assert len(top_level) == 1
         assert job.project_file and job.project_file in top_level[0]
 
-    async def test_separate_mode_writes_no_project_file(self, worker):
-        worker.settings.plate_output = "separate"
+    async def test_per_plate_files_are_the_default(self, worker):
+        """The proven output ships by default; the project file is opt-in."""
         job = await run_job(worker)
         with zipfile.ZipFile(job.zip_path) as zf:
             top_level = [n for n in zf.namelist()

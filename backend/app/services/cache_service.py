@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..db import Database
-from ..ldraw.stl import validate_stl_file
+from ..ldraw.stl import read_stl, validate_stl_file
 from ..providers.base import ModelProvider, ModelResult
 
 _SAFE_ID = re.compile(r"[^A-Za-z0-9._-]")
@@ -37,6 +37,8 @@ class CachedGeometry:
     dimensions: tuple[float, float, float]
     sha256: str
     from_cache: bool
+    volume_mm3: float = 0.0
+    area_mm2: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -44,6 +46,7 @@ class CachedGeometry:
             "model_id": self.model_id, "size_bytes": self.size_bytes,
             "triangles": self.triangles, "dimensions_mm": list(self.dimensions),
             "sha256": self.sha256, "from_cache": self.from_cache,
+            "volume_mm3": self.volume_mm3, "area_mm2": self.area_mm2,
         }
 
 
@@ -82,6 +85,13 @@ class CacheService:
             self.invalidate(cache_key)
             return None
 
+        volume = row["volume_mm3"] or 0.0
+        area = row["area_mm2"] or 0.0
+        if volume <= 0.0 or area <= 0.0:
+            # Entry predates the filament estimate. Measure it from the STL we
+            # already have rather than throwing away a good conversion.
+            volume, area = self._backfill_measurements(cache_key, path)
+
         self.db.conn.execute(
             "UPDATE geometry_cache SET last_used_at = ? WHERE cache_key = ?",
             (time.time(), cache_key))
@@ -90,7 +100,25 @@ class CacheService:
             cache_key=cache_key, provider=row["provider"], model_id=row["model_id"],
             path=path, size_bytes=row["size_bytes"], triangles=row["triangles"],
             dimensions=(row["dim_x"], row["dim_y"], row["dim_z"]),
-            sha256=row["sha256"], from_cache=True)
+            sha256=row["sha256"], from_cache=True,
+            volume_mm3=volume, area_mm2=area)
+
+    def _backfill_measurements(self, cache_key: str, path: Path) -> tuple[float, float]:
+        """Measure an older cache entry and record the result."""
+        try:
+            mesh = read_stl(path)
+        except (OSError, ValueError):
+            return (0.0, 0.0)
+        volume = abs(mesh.volume())
+        area = mesh.surface_area()
+        try:
+            with self.db.connect() as conn:
+                conn.execute(
+                    "UPDATE geometry_cache SET volume_mm3 = ?, area_mm2 = ? "
+                    "WHERE cache_key = ?", (volume, area, cache_key))
+        except Exception:                                      # noqa: BLE001
+            pass          # the measurement still stands for this request
+        return (volume, area)
 
     def store(self, provider: ModelProvider, result: ModelResult) -> CachedGeometry:
         cache_key = f"{provider.name}:{result.model_id}"
@@ -101,17 +129,18 @@ class CacheService:
                 "INSERT OR REPLACE INTO geometry_cache "
                 "(cache_key, provider, model_id, source_version, converter_version, "
                 " stl_path, sha256, size_bytes, triangles, dim_x, dim_y, dim_z, "
-                " created_at, last_used_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " volume_mm3, area_mm2, created_at, last_used_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cache_key, provider.name, result.model_id, result.source_version,
                  provider.converter_version, str(result.path), digest,
                  result.size_bytes, result.triangles,
                  result.dimensions[0], result.dimensions[1], result.dimensions[2],
-                 now, now))
+                 result.volume_mm3, result.area_mm2, now, now))
         return CachedGeometry(
             cache_key=cache_key, provider=provider.name, model_id=result.model_id,
             path=result.path, size_bytes=result.size_bytes, triangles=result.triangles,
-            dimensions=result.dimensions, sha256=digest, from_cache=False)
+            dimensions=result.dimensions, sha256=digest, from_cache=False,
+            volume_mm3=result.volume_mm3, area_mm2=result.area_mm2)
 
     def get_or_build(self, provider: ModelProvider, model_id: str) -> CachedGeometry:
         """Return cached geometry, converting it only if we do not have it.

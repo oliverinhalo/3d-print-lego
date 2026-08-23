@@ -18,9 +18,35 @@ export interface LegoSet {
 export type ColorMode = 'none' | 'family' | 'exact'
 export type PlateOutput = 'separate' | 'project' | 'both'
 
+export interface EstimateFigures {
+  pieces: number
+  grams: number
+  kilograms: number
+  metres: number
+  spools: number
+  hours: number
+  seconds: number
+  cost: number
+  currency: string
+  time_text: string
+}
+
+export interface Estimate extends EstimateFigures {
+  profile: {
+    layer_height_mm: number
+    wall_count: number
+    infill_percent: number
+    density_g_cm3: number
+    price_per_kg: number
+    currency: string
+  }
+  plates: Record<string, EstimateFigures>
+}
+
 export interface PlateInfo {
   index: number
   group: string
+  label: string
   count: number
   fill_percent: number
   bed: [number, number]
@@ -96,6 +122,7 @@ export interface JobSummary {
   oversized: string[]
   plate_output: PlateOutput
   project_file: string | null
+  estimate: Estimate | null
   error: string | null
   created_at: number
   finished_at: number | null
@@ -111,6 +138,7 @@ export type JobEvent =
   | { type: 'models_resolved'; distinct_geometries: number; matched: number; unmatched: number; parts: Part[] }
   | { type: 'part_progress'; part: Part; completed: number; total: number }
   | { type: 'zip_progress'; written: number; total: number }
+  | { type: 'estimate_ready'; estimate: Estimate }
   | { type: 'plates_ready'; plate_count: number; plates: PlateInfo[]; oversized: string[] }
   | { type: 'plate_written'; index: number; name: string; total: number }
   | { type: 'job_complete'; job: JobSummary; failed_parts: Part[] }

@@ -293,12 +293,12 @@ async def options(context: AppContext = Depends(get_context)) -> dict:
             for key, size in BED_PRESETS.items()
         ],
         "plate_outputs": [
-            {"id": "both", "label": "Both",
-             "detail": "One project file plus a file per plate"},
-            {"id": "project", "label": "One project file",
-             "detail": "Every plate in a single file, named by colour"},
             {"id": "separate", "label": "A file per plate",
-             "detail": "Plain 3MF, opens in any slicer"},
+             "detail": "Plain 3MF - open one, it is ready to print"},
+            {"id": "both", "label": "Also try one project file",
+             "detail": "Adds an experimental all-in-one Bambu project"},
+            {"id": "project", "label": "Only the project file",
+             "detail": "Experimental - every plate in one file"},
         ],
         "color_modes": [
             {"id": "none", "label": "Any colour",

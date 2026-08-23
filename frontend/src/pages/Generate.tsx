@@ -107,6 +107,10 @@ export function Generate({ jobId, onStartOver }: Props) {
         }
         break
 
+      case 'estimate_ready':
+        setJob(j => j ? { ...j, estimate: event.estimate } : j)
+        break
+
       case 'job_complete':
         setJob(event.job)
         if (event.job.set) setSet(event.job.set)

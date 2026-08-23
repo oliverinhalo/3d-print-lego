@@ -84,6 +84,7 @@ class Job:
     plates: list = field(default_factory=list)      # list[Plate]
     oversized: list = field(default_factory=list)   # pieces too big for the bed
     project_file: str | None = None                 # name of the merged project
+    estimate: dict | None = None                    # filament, cost and time
 
     # --- derived counters -------------------------------------------------
     @property
@@ -130,6 +131,7 @@ class Job:
             "plate_count": len(self.plates),
             "plates": [p.to_dict() for p in self.plates],
             "oversized": sorted({i.part_num for i in self.oversized}),
+            "estimate": self.estimate,
             "zip_name": self.zip_name,
             "zip_bytes": self.zip_bytes,
             "error": self.error,

@@ -79,6 +79,8 @@ CREATE TABLE IF NOT EXISTS geometry_cache (
     size_bytes       INTEGER NOT NULL,
     triangles        INTEGER NOT NULL,
     dim_x            REAL, dim_y REAL, dim_z REAL,
+    volume_mm3       REAL DEFAULT 0,
+    area_mm2         REAL DEFAULT 0,
     created_at       REAL NOT NULL,
     last_used_at     REAL NOT NULL
 );
@@ -116,6 +118,23 @@ class Database:
         self._local = threading.local()
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+        self._migrate()
+
+    #: Columns added after the first release, with their definitions. SQLite
+    #: has no "ADD COLUMN IF NOT EXISTS", so existing databases are upgraded
+    #: by comparing against the live schema.
+    MIGRATIONS: dict[str, list[tuple[str, str]]] = {
+        "geometry_cache": [("volume_mm3", "REAL DEFAULT 0"),
+                           ("area_mm2", "REAL DEFAULT 0")],
+    }
+
+    def _migrate(self) -> None:
+        with self.connect() as conn:
+            for table, columns in self.MIGRATIONS.items():
+                existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+                for name, definition in columns:
+                    if name not in existing:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
     def _new_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=30.0, check_same_thread=False)

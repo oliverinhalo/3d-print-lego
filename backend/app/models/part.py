@@ -70,6 +70,8 @@ class PrintPart:
     error: str | None = None
     triangles: int = 0
     dimensions_mm: tuple[float, float, float] | None = None
+    volume_mm3: float = 0.0
+    area_mm2: float = 0.0
 
     def to_dict(self) -> dict:
         return {

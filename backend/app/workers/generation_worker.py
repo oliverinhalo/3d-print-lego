@@ -30,6 +30,7 @@ from ..providers.base import ProviderError, ProviderUnavailable, SetNotFound
 from ..providers.registry import ProviderRegistry
 from ..services.cache_service import CacheService
 from ..services.color_service import ColorMode, ColorService, group_key, group_swatch
+from ..services.estimate_service import Estimate, PrintProfile, estimate_part
 from ..services.job_service import JobManager
 from ..services.plate_service import (PackItem, Plate, bed_height, bed_size,
                                       pack_items)
@@ -53,6 +54,16 @@ class GenerationWorker:
         self.zips = zips
         self.jobs = jobs
         self.colors = ColorService(registry.db) if hasattr(registry, "db") else None
+        self.print_profile = PrintProfile(
+            layer_height_mm=settings.layer_height_mm,
+            wall_count=settings.wall_count,
+            line_width_mm=settings.line_width_mm,
+            infill=settings.infill_percent / 100.0,
+            density_g_cm3=settings.filament_density,
+            price_per_kg=settings.filament_price_per_kg,
+            flow_mm3_s=settings.flow_rate_mm3_s,
+            currency=settings.currency,
+        )
 
     # --- helpers ----------------------------------------------------------
     # ``/`` marks these arguments positional-only: event payloads legitimately
@@ -156,6 +167,8 @@ class GenerationWorker:
             plates, oversized = await asyncio.to_thread(self._arrange, job, geometry_paths)
             job.plates = plates
             job.oversized = oversized
+            job.estimate = self._estimate(job)
+            self._emit(job, "estimate_ready", estimate=job.estimate)
             self._emit(job, "plates_ready", plate_count=len(plates),
                        plates=[p.to_dict() for p in plates],
                        oversized=sorted({i.part_num for i in oversized}))
@@ -286,6 +299,8 @@ class GenerationWorker:
                                        else PartStatus.READY)
                         part.triangles = cached.triangles
                         part.dimensions_mm = cached.dimensions
+                        part.volume_mm3 = cached.volume_mm3
+                        part.area_mm2 = cached.area_mm2
                         geometry_paths[part.part_num] = cached.path
                 async with lock:
                     done += 1
@@ -325,6 +340,37 @@ class GenerationWorker:
             include_stls=self.settings.include_stls,
             progress=lambda written, total: self._emit(
                 job, "zip_progress", written=written, total=total))
+
+    def _estimate(self, job: Job) -> dict:
+        """Filament, cost and time for everything that will actually print."""
+        profile = self.print_profile
+        total = Estimate()
+        per_plate: dict[int, Estimate] = {}
+
+        for part in job.parts.values():
+            if part.status not in (PartStatus.READY, PartStatus.CACHED):
+                continue
+            height = part.dimensions_mm[2] if part.dimensions_mm else 10.0
+            total = total + estimate_part(part.volume_mm3, part.area_mm2,
+                                          height, part.quantity, profile)
+
+        # Per-plate figures let someone print the cheap plates first.
+        for plate in job.plates:
+            running = Estimate()
+            for placement in plate.placements:
+                part = job.parts.get(placement.item.part_num)
+                if part is None:
+                    continue
+                height = part.dimensions_mm[2] if part.dimensions_mm else 10.0
+                running = running + estimate_part(part.volume_mm3, part.area_mm2,
+                                                  height, 1, profile)
+            per_plate[plate.index] = running
+
+        result = total.to_dict(profile)
+        result["profile"] = profile.to_dict()
+        result["plates"] = {index: value.to_dict(profile)
+                            for index, value in per_plate.items()}
+        return result
 
     # --- build plates -----------------------------------------------------
     def _arrange(self, job: Job, geometry_paths: dict[str, Path]):
