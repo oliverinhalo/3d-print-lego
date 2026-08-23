@@ -26,10 +26,23 @@ class TestHappyPath:
         assert job.files_written == 5          # 3001 x2 + 3024 x3
 
     async def test_the_zip_holds_one_file_per_physical_piece(self, worker):
+        worker.settings.include_stls = True
         job = await run_job(worker)
         with zipfile.ZipFile(job.zip_path) as zf:
             stls = [n for n in zf.namelist() if n.endswith(".stl")]
         assert len(stls) == 5
+
+    async def test_the_zip_holds_pre_arranged_plates(self, worker):
+        job = await run_job(worker)
+        with zipfile.ZipFile(job.zip_path) as zf:
+            plates = [n for n in zf.namelist() if n.endswith(".3mf")]
+        assert plates, "expected at least one build plate"
+        assert len(plates) == len(job.plates)
+
+    async def test_every_piece_lands_on_a_plate(self, worker):
+        job = await run_job(worker)
+        placed = sum(p.count for p in job.plates)
+        assert placed == job.total_pieces
 
     async def test_every_part_ends_ready(self, worker):
         job = await run_job(worker)
@@ -81,6 +94,7 @@ class TestFailureIsolation:
 
     async def test_successful_parts_are_retained(
             self, worker, fake_set_provider):
+        worker.settings.include_stls = True
         fake_set_provider.inventory = {"3001": 2, "3024": 3, "9999": 4}
         job = await run_job(worker)
         with zipfile.ZipFile(job.zip_path) as zf:
@@ -111,6 +125,7 @@ class TestFailureIsolation:
             self, worker, fake_set_provider, fake_model_provider):
         fake_set_provider.inventory = {"3001": 2, "3024": 3}
         fake_model_provider.failing = {"3024"}
+        worker.settings.include_stls = True
         job = await run_job(worker)
         assert job.status is JobStatus.PARTIAL
 

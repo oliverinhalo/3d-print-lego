@@ -21,11 +21,14 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from ..models.job import Job, JobStatus
 from ..providers.base import ProviderError, ProviderUnavailable, SetNotFound
 from ..services.normalize import InvalidSetNumber, normalize_set_number
+from ..services.plate_service import BED_PRESETS
 from .deps import AppContext, RateLimiter, client_key, get_context
 
 log = logging.getLogger(__name__)
@@ -46,6 +49,11 @@ class GenerateRequest(BaseModel):
     set_number: str = Field(..., min_length=1, max_length=64,
                             description='LEGO set number, e.g. "77263" or "#77263"')
     include_spares: bool = Field(False, description="Include spare parts in the pack")
+    color_mode: Literal["none", "family", "exact"] | None = Field(
+        None, description='How to group parts onto plates: ignore colour, '
+                          'group similar colours, or one group per exact colour')
+    bed_preset: str | None = Field(
+        None, max_length=32, description="Printer whose bed size to arrange for")
 
 
 class GenerateResponse(BaseModel):
@@ -70,8 +78,15 @@ async def generate(payload: GenerateRequest, request: Request,
             503, "The catalogue or parts library is not installed. "
                  "Run: python scripts/bootstrap_data.py")
 
+    settings = context.settings
+    bed = payload.bed_preset or settings.bed_preset
+    if bed not in BED_PRESETS:
+        raise HTTPException(400, f"Unknown printer {bed!r}.")
+
     job = Job(query=payload.set_number.strip(), set_num=set_num,
-              include_spares=payload.include_spares)
+              include_spares=payload.include_spares,
+              color_mode=payload.color_mode or settings.color_mode,
+              bed_preset=bed)
     context.jobs.register(job)
 
     task = asyncio.create_task(context.worker.run(job))
@@ -223,6 +238,69 @@ async def download(job_id: str, context: AppContext = Depends(get_context)) -> F
     return FileResponse(
         path, media_type="application/zip", filename=path.name,
         headers={"Content-Disposition": f'attachment; filename="{path.name}"'})
+
+
+@router.get("/browse")
+async def browse_sets(request: Request,
+                      q: str = "", theme: int | None = None, year: int | None = None,
+                      min_parts: int = 1, max_parts: int = 0,
+                      sort: str = "popular", limit: int = 24, offset: int = 0,
+                      context: AppContext = Depends(get_context)) -> dict:
+    """Browse the catalogue: what the set picker is built on.
+
+    Everything comes from the local dataset, so this is instant and needs no
+    third-party site.
+    """
+    limiter(request).check(client_key(request))
+    provider = context.registry.csv_provider
+    if not provider.available:
+        raise HTTPException(503, "The LEGO catalogue has not been imported yet.")
+
+    try:
+        result = await asyncio.to_thread(
+            provider.browse,
+            query=(q or "").strip()[:64], theme_id=theme, year=year,
+            min_parts=max(int(min_parts), 1), max_parts=max(int(max_parts), 0),
+            sort=sort if sort in ("popular", "newest", "smallest", "name") else "popular",
+            limit=min(max(int(limit), 1), 60), offset=max(int(offset), 0))
+    except (ProviderUnavailable, ProviderError) as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return result
+
+
+@router.get("/themes")
+async def list_themes(request: Request,
+                      context: AppContext = Depends(get_context)) -> dict:
+    limiter(request).check(client_key(request))
+    provider = context.registry.csv_provider
+    if not provider.available:
+        raise HTTPException(503, "The LEGO catalogue has not been imported yet.")
+    themes = await asyncio.to_thread(provider.themes, 40)
+    return {"themes": themes}
+
+
+@router.get("/options")
+async def options(context: AppContext = Depends(get_context)) -> dict:
+    """Printer presets and colour modes, so the UI never hard-codes them."""
+    return {
+        "printers": [
+            {"id": key, "bed": list(size),
+             "label": key.replace("_", " ").title()}
+            for key, size in BED_PRESETS.items()
+        ],
+        "color_modes": [
+            {"id": "none", "label": "Any colour",
+             "detail": "Pack by size only - fewest plates"},
+            {"id": "family", "label": "Similar colours",
+             "detail": "All reds together, all blues together"},
+            {"id": "exact", "label": "Exact colours",
+             "detail": "One group per LEGO colour code"},
+        ],
+        "defaults": {
+            "bed_preset": context.settings.bed_preset,
+            "color_mode": context.settings.color_mode,
+        },
+    }
 
 
 @router.get("/health")

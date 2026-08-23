@@ -33,6 +33,7 @@ class Stage(str, Enum):
     FINDING_MODELS = "finding_models"
     CONVERTING = "converting"
     VALIDATING = "validating"
+    ARRANGING = "arranging"
     DUPLICATING = "duplicating"
     BUILDING_ZIP = "building_zip"
     COMPLETE = "complete"
@@ -45,6 +46,7 @@ STAGE_LABELS: dict[Stage, str] = {
     Stage.FINDING_MODELS: "Finding 3D models",
     Stage.CONVERTING: "Converting geometry",
     Stage.VALIDATING: "Validating STL",
+    Stage.ARRANGING: "Arranging build plates",
     Stage.DUPLICATING: "Creating duplicate parts",
     Stage.BUILDING_ZIP: "Building ZIP",
     Stage.COMPLETE: "Complete",
@@ -73,6 +75,12 @@ class Job:
     zip_bytes: int = 0
     files_written: int = 0
     include_spares: bool = False
+    # --- options chosen for this job ---
+    color_mode: str = "family"
+    bed_preset: str = "bambu_p1"
+    # --- results of arranging ---
+    plates: list = field(default_factory=list)      # list[Plate]
+    oversized: list = field(default_factory=list)   # pieces too big for the bed
 
     # --- derived counters -------------------------------------------------
     @property
@@ -112,6 +120,11 @@ class Job:
             "ready": len(self.ready_parts),
             "failed": len(self.failed_parts),
             "files_written": self.files_written,
+            "color_mode": self.color_mode,
+            "bed_preset": self.bed_preset,
+            "plate_count": len(self.plates),
+            "plates": [p.to_dict() for p in self.plates],
+            "oversized": sorted({i.part_num for i in self.oversized}),
             "zip_name": self.zip_name,
             "zip_bytes": self.zip_bytes,
             "error": self.error,

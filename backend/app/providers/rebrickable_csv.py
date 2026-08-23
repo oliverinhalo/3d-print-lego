@@ -120,6 +120,69 @@ class RebrickableCSVProvider(SetProvider, PartProvider):
             (pattern, pattern, int(limit)))
         return [self._row_to_set(r) for r in rows]
 
+    def themes(self, limit: int = 60) -> list[dict]:
+        """Top-level themes with a set count, for the browse screen."""
+        self._require()
+        rows = self.db.query(
+            "SELECT COALESCE(top.id, t.id) AS id, "
+            "       COALESCE(top.name, t.name) AS name, "
+            "       COUNT(*) AS sets "
+            "FROM sets s "
+            "JOIN themes t ON t.id = s.theme_id "
+            "LEFT JOIN themes top ON top.id = t.parent_id "
+            "WHERE s.num_parts > 0 "
+            "GROUP BY COALESCE(top.id, t.id) "
+            "ORDER BY sets DESC LIMIT ?", (int(limit),))
+        return [{"id": r["id"], "name": r["name"], "sets": r["sets"]} for r in rows]
+
+    def browse(self, *, query: str = "", theme_id: int | None = None,
+               year: int | None = None, min_parts: int = 1, max_parts: int = 0,
+               sort: str = "popular", limit: int = 24, offset: int = 0) -> dict:
+        """Paginated set browsing for the catalogue screen.
+
+        Only sets with a real inventory are listed: a set with no parts data
+        cannot be generated, so offering it would be a dead end.
+        """
+        self._require()
+        where = ["s.num_parts >= ?", "EXISTS (SELECT 1 FROM inventories i WHERE i.set_num = s.set_num)"]
+        params: list = [max(int(min_parts), 1)]
+
+        if max_parts:
+            where.append("s.num_parts <= ?")
+            params.append(int(max_parts))
+        if query:
+            where.append("(s.name LIKE ? OR s.set_num LIKE ?)")
+            params += [f"%{query}%", f"%{query}%"]
+        if theme_id:
+            where.append("(s.theme_id = ? OR t.parent_id = ?)")
+            params += [int(theme_id), int(theme_id)]
+        if year:
+            where.append("s.year = ?")
+            params.append(int(year))
+
+        order = {
+            "popular": "s.num_parts DESC",
+            "newest": "s.year DESC, s.num_parts DESC",
+            "smallest": "s.num_parts ASC",
+            "name": "s.name ASC",
+        }.get(sort, "s.num_parts DESC")
+
+        clause = " AND ".join(where)
+        total = self.db.query_one(
+            f"SELECT COUNT(*) AS n FROM sets s "
+            f"LEFT JOIN themes t ON t.id = s.theme_id WHERE {clause}", tuple(params))
+
+        rows = self.db.query(
+            f"SELECT s.*, t.name AS theme_name FROM sets s "
+            f"LEFT JOIN themes t ON t.id = s.theme_id "
+            f"WHERE {clause} ORDER BY {order} LIMIT ? OFFSET ?",
+            (*params, int(limit), int(offset)))
+
+        return {
+            "total": int(total["n"]) if total else 0,
+            "results": [self._row_to_set(r).to_dict() for r in rows],
+        }
+
     @staticmethod
     def _row_to_set(row: sqlite3.Row) -> LegoSet:
         keys = row.keys()

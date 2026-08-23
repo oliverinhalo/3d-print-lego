@@ -15,6 +15,42 @@ export interface LegoSet {
   img_url: string | null
 }
 
+export type ColorMode = 'none' | 'family' | 'exact'
+
+export interface PlateInfo {
+  index: number
+  group: string
+  count: number
+  fill_percent: number
+  bed: [number, number]
+  parts: string[]
+}
+
+export interface Printer {
+  id: string
+  label: string
+  bed: [number, number]
+}
+
+export interface ColorModeOption {
+  id: ColorMode
+  label: string
+  detail: string
+}
+
+export interface Options {
+  printers: Printer[]
+  color_modes: ColorModeOption[]
+  defaults: { bed_preset: string; color_mode: ColorMode }
+}
+
+export interface ColorCount {
+  color_id: number | null
+  color_name: string
+  rgb: string
+  quantity: number
+}
+
 export interface Part {
   part_num: string
   name: string
@@ -27,6 +63,7 @@ export interface Part {
   error: string | null
   triangles: number
   dimensions_mm: number[] | null
+  colors: ColorCount[]
 }
 
 export interface JobSummary {
@@ -44,6 +81,11 @@ export interface JobSummary {
   files_written: number
   zip_name: string | null
   zip_bytes: number
+  color_mode: ColorMode
+  bed_preset: string
+  plate_count: number
+  plates: PlateInfo[]
+  oversized: string[]
   error: string | null
   created_at: number
   finished_at: number | null
@@ -59,6 +101,8 @@ export type JobEvent =
   | { type: 'models_resolved'; distinct_geometries: number; matched: number; unmatched: number; parts: Part[] }
   | { type: 'part_progress'; part: Part; completed: number; total: number }
   | { type: 'zip_progress'; written: number; total: number }
+  | { type: 'plates_ready'; plate_count: number; plates: PlateInfo[]; oversized: string[] }
+  | { type: 'plate_written'; index: number; name: string; total: number }
   | { type: 'job_complete'; job: JobSummary; failed_parts: Part[] }
   | { type: 'job_failed'; error: string; job?: JobSummary }
   | { type: 'job_cancelled'; job: JobSummary }

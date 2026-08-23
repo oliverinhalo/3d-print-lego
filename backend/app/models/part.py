@@ -37,8 +37,27 @@ class GeometryRef:
 
 
 @dataclass(slots=True)
+class ColorCount:
+    """How many of this part the set needs in one specific colour."""
+
+    color_id: int | None
+    color_name: str
+    rgb: str
+    quantity: int
+
+    def to_dict(self) -> dict:
+        return {"color_id": self.color_id, "color_name": self.color_name,
+                "rgb": self.rgb, "quantity": self.quantity}
+
+
+@dataclass(slots=True)
 class PrintPart:
-    """An inventory part resolved to a geometry, with its total quantity."""
+    """An inventory part resolved to a geometry, with its total quantity.
+
+    ``quantity`` is the total across every colour, because that is how many
+    physical copies get printed. ``colors`` keeps the per-colour split so the
+    pieces can be grouped onto single-filament plates.
+    """
 
     part_num: str
     name: str
@@ -46,6 +65,7 @@ class PrintPart:
     geometry: GeometryRef | None = None
     status: PartStatus = PartStatus.QUEUED
     color_names: list[str] = field(default_factory=list)
+    colors: list[ColorCount] = field(default_factory=list)
     img_url: str | None = None
     error: str | None = None
     triangles: int = 0
@@ -64,4 +84,5 @@ class PrintPart:
             "error": self.error,
             "triangles": self.triangles,
             "dimensions_mm": list(self.dimensions_mm) if self.dimensions_mm else None,
+            "colors": [c.to_dict() for c in self.colors],
         }

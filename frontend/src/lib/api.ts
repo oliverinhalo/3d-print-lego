@@ -1,4 +1,4 @@
-import type { JobEvent, JobSummary, LegoSet } from '../types'
+import type { ColorMode, JobEvent, JobSummary, LegoSet, Options } from '../types'
 
 const BASE = '/api'
 
@@ -20,11 +20,40 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
-export function startGeneration(setNumber: string) {
+export interface GenerateOptions {
+  color_mode?: ColorMode
+  bed_preset?: string
+}
+
+export function startGeneration(setNumber: string, options: GenerateOptions = {}) {
   return request<{ job_id: string; set_num: string }>('/generate', {
     method: 'POST',
-    body: JSON.stringify({ set_number: setNumber }),
+    body: JSON.stringify({ set_number: setNumber, ...options }),
   })
+}
+
+export interface BrowseQuery {
+  q?: string
+  theme?: number
+  sort?: string
+  limit?: number
+  offset?: number
+}
+
+export function browseSets(query: BrowseQuery = {}) {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== '' && value !== null) params.set(key, String(value))
+  }
+  return request<{ total: number; results: LegoSet[] }>(`/browse?${params}`)
+}
+
+export function getThemes() {
+  return request<{ themes: { id: number; name: string; sets: number }[] }>('/themes')
+}
+
+export function getOptions() {
+  return request<Options>('/options')
 }
 
 export function previewSet(setNumber: string) {

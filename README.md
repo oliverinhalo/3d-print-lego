@@ -4,11 +4,16 @@ Enter a LEGO set number. Get back a ZIP containing an STL file for every
 physical piece in that set, ready to drag into a slicer and print.
 
 ```
-#77263  →  find set  →  load inventory  →  match geometry  →  convert  →  ZIP
+#77263  →  find set  →  inventory  →  match geometry  →  convert
+        →  pack onto build plates  →  ZIP of ready-to-print 3MF files
 ```
 
 The user never sees a part id, a mesh, an API or a cache. They type a number
-and press one button.
+(or pick a set from the browser) and press one button.
+
+**The output is build plates, not a pile of files.** A 3,000-piece set is
+25 plate files, each already arranged and ready to slice — not 3,000 STLs for
+your slicer to import and fail to auto-arrange.
 
 ---
 
@@ -20,18 +25,24 @@ Given `77263`, `#77263` or `LEGO 77263`, the application:
 2. loads the complete parts inventory (353 pieces, 113 unique parts);
 3. collapses colour variants and decorated prints onto **shared geometry**
    (113 parts → 95 distinct shapes to actually convert);
-4. converts each distinct shape from LDraw to a millimetre-accurate STL,
+4. converts each distinct shape from LDraw to a millimetre-accurate mesh,
    concurrently, caching every result permanently;
-5. writes one STL file per physical piece (343 files);
-6. packages everything into `LEGO_77263_Print_Pack.zip`.
+5. packs the 353 physical pieces onto build plates, optionally grouped so
+   each plate is a single filament colour;
+6. writes one 3MF per plate, with the geometry stored once and referenced by
+   each copy;
+7. packages everything into `LEGO_77263_Print_Pack.zip`.
 
 Measured on a laptop-class machine:
 
-| Set | Pieces | Unique | Shapes converted | STL files | ZIP | Cold | Warm |
-|-----|-------:|-------:|-----------------:|----------:|----:|-----:|-----:|
-| 77263 BMW M3 | 353 | 113 | 95 | 343 | 5.8 MB | 1.3 s | 0.3 s |
-| 31120 Medieval Castle | 1 407 | 211 | 211 | 1 407 | 32.9 MB | 2.1 s | — |
-| 21318 Tree House | 3 017 | 256 | 245 | 3 017 | 107 MB | 4.9 s | 0.9 s |
+| Set | Pieces | Unique | Plates | Files to open | ZIP | Time |
+|-----|-------:|-------:|-------:|--------------:|----:|-----:|
+| 77263 BMW M3 | 353 | 113 | 2 | 2 | 0.3 MB | 1.3 s |
+| 31120 Medieval Castle | 1 407 | 211 | 9 | 9 | 1.5 MB | 1.5 s |
+| 21318 Tree House | 3 017 | 256 | 25 | 25 | 2.3 MB | 2.6 s |
+
+(Plate counts are with colour grouping off. Grouping by colour trades more
+plates for single-filament printing: the BMW becomes 11 plates.)
 
 The cache is shared across sets and users, so the second set you generate is
 substantially faster than the first.
@@ -114,6 +125,53 @@ pytest -m "not realdata"  # skip tests needing the downloaded data
 
 ---
 
+## 2b. Build plates and colour grouping
+
+### Why plates
+
+Slicers struggle to import several hundred objects at once, and their
+auto-arrange gives up on the ones that do not fit, leaving objects stranded
+off the bed. So the arranging happens server-side instead: parts are packed
+onto plates that fit your printer, and each plate is written as a 3MF with
+every piece already positioned.
+
+Open one plate file. It is arranged, spaced and inside the printable area.
+Slice it. Move to the next plate. There is no Auto Arrange step.
+
+3MF also removes the duplication: a plate with 25 identical 1x2 plates stores
+that mesh **once** and references it 25 times. A plate file is typically
+tens of kilobytes where the same pieces as STLs would be megabytes.
+
+### Colour grouping
+
+A slider on the homepage chooses how plates are grouped:
+
+| Mode | What it does | Good for |
+|---|---|---|
+| **Any colour** | Ignores colour, packs purely by size | Fewest plates, printing in one colour |
+| **Similar colours** *(default)* | All reds together, all blues together | One filament per plate without a plate per shade |
+| **Exact colours** | One group per LEGO colour code | Faithful colour, at the cost of more, emptier plates |
+
+Families are derived from each colour's RGB, not its name — there are 275
+LEGO colours with names like "Dark Bluish Gray", and hue is far more reliable
+than string matching. Transparent colours are always their own family, since
+they need translucent filament.
+
+### Printer
+
+Pick your printer in the options and parts are packed for that bed. Anything
+too large for it is reported rather than silently dropped.
+
+Presets: Bambu A1 mini / A1 / P1 / X1 / H2D, Prusa MK4, Ender 3, Voron 350.
+
+### Still want individual STLs?
+
+Set `INCLUDE_STLS=true` and the ZIP also gets an `STLs/` folder with one file
+per piece. It is off by default because that folder is the import problem
+plates exist to solve.
+
+---
+
 ## 3. Configuration
 
 Everything is environment-driven; see `.env.example` for the annotated list.
@@ -130,6 +188,11 @@ The settings worth knowing about:
 | `CACHE_RETENTION` | `2592000` | Seconds before unused geometry is dropped |
 | `PART_SCALE` | `1.0` | Uniform scale applied to every part (see §8) |
 | `ORIENT_STRATEGY` | `native` | `native` keeps studs up; `flat` lays parts down |
+| `BED_PRESET` | `bambu_p1` | Printer bed used when packing plates |
+| `COLOR_MODE` | `family` | `none`, `family` or `exact` |
+| `PLATE_GAP_MM` | `3.0` | Gap between parts on a plate |
+| `BUILD_PLATES` | `true` | Write pre-arranged 3MF plates |
+| `INCLUDE_STLS` | `false` | Also write one STL per piece |
 | `SET_PROVIDER` | `rebrickable_csv` | `rebrickable_csv` or `rebrickable_api` |
 | `REBRICKABLE_API_KEY` | *(empty)* | Only for `rebrickable_api` |
 | `LOCAL_MODEL_DIRECTORY` | *(unset)* | Your own STLs, tried before LDraw |
@@ -301,6 +364,9 @@ backend/app/
                   mecabricks.py            documented, non-functional stub
                   registry.py              provider selection + chaining
     services/     cache_service.py         persistent geometry cache
+                  plate_service.py         packs pieces onto build plates
+                  threemf_service.py       writes pre-arranged 3MF plates
+                  color_service.py         LEGO colours and colour families
                   zip_service.py           streaming ZIP assembly
                   job_service.py           job registry + SSE event bus
                   naming_service.py        cross-platform filenames
@@ -328,11 +394,14 @@ with polling as an automatic fallback.
 | `POST /api/jobs/{id}/retry` | Retry only the failed parts |
 | `GET /api/jobs/{id}/download` | The ZIP |
 | `GET /api/sets/{number}` | Set preview without generating |
+| `GET /api/browse` | Paginated catalogue browsing (search, theme, sort) |
+| `GET /api/themes` | Theme list with set counts |
+| `GET /api/options` | Printer presets and colour modes |
 | `GET /api/health` | Providers, cache and job diagnostics |
 
 Event types: `job_started`, `set_found`, `inventory_loaded`,
-`parts_identified`, `models_resolved`, `part_progress`, `zip_progress`,
-`job_complete`, `job_failed`.
+`parts_identified`, `models_resolved`, `part_progress`, `plates_ready`,
+`plate_written`, `zip_progress`, `job_complete`, `job_failed`.
 
 ---
 

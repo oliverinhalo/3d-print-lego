@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Browse } from './pages/Browse'
 import { Generate } from './pages/Generate'
 import { Home } from './pages/Home'
 
@@ -10,10 +11,15 @@ import { Home } from './pages/Home'
 export default function App() {
   const [jobId, setJobId] = useState<string | null>(
     () => new URLSearchParams(window.location.search).get('job'))
+  const [browsing, setBrowsing] = useState(
+    () => new URLSearchParams(window.location.search).has('browse'))
+  const [preset, setPreset] = useState('')
 
   useEffect(() => {
     const onPop = () => {
-      setJobId(new URLSearchParams(window.location.search).get('job'))
+      const params = new URLSearchParams(window.location.search)
+      setJobId(params.get('job'))
+      setBrowsing(params.has('browse'))
     }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
@@ -27,6 +33,12 @@ export default function App() {
   function reset() {
     window.history.pushState({}, '', window.location.pathname)
     setJobId(null)
+    setBrowsing(false)
+  }
+
+  function openBrowse() {
+    window.history.pushState({}, '', '?browse=1')
+    setBrowsing(true)
   }
 
   return (
@@ -43,7 +55,15 @@ export default function App() {
 
       {jobId
         ? <Generate jobId={jobId} onStartOver={reset} />
-        : <Home onStarted={start} />}
+        : browsing
+          ? <Browse
+              onClose={reset}
+              onPick={(set) => {
+                setPreset(set.set_num)
+                setBrowsing(false)
+                window.history.pushState({}, '', window.location.pathname)
+              }} />
+          : <Home onStarted={start} onBrowse={openBrowse} preset={preset} />}
     </div>
   )
 }

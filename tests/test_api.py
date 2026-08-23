@@ -156,3 +156,42 @@ class TestHealth:
         body = client.get("/api/health").json()
         assert body["status"] == "ok"
         assert "providers" in body and "cache" in body and "jobs" in body
+
+
+class TestOptionsAndBrowse:
+    def test_options_lists_printers_and_colour_modes(self, client):
+        body = client.get("/api/options").json()
+        assert body["printers"] and body["color_modes"]
+        assert {m["id"] for m in body["color_modes"]} == {"none", "family", "exact"}
+        assert body["defaults"]["bed_preset"]
+
+    @pytest.mark.parametrize("mode", ["none", "family", "exact"])
+    def test_generate_accepts_each_colour_mode(self, client, mode):
+        response = client.post("/api/generate",
+                               json={"set_number": "77263", "color_mode": mode})
+        assert response.status_code == 202
+
+    def test_generate_rejects_an_unknown_printer(self, client):
+        response = client.post("/api/generate",
+                               json={"set_number": "77263", "bed_preset": "not_a_printer"})
+        assert response.status_code == 400
+
+    def test_generate_rejects_a_bogus_colour_mode(self, client):
+        response = client.post("/api/generate",
+                               json={"set_number": "77263", "color_mode": "rainbow"})
+        assert response.status_code == 422
+
+    def test_the_chosen_options_are_recorded_on_the_job(self, client):
+        job_id = client.post("/api/generate", json={
+            "set_number": "77263", "color_mode": "exact", "bed_preset": "bambu_a1_mini",
+        }).json()["job_id"]
+        body = wait_for_completion(client, job_id)
+        assert body["color_mode"] == "exact"
+        assert body["bed_preset"] == "bambu_a1_mini"
+
+    def test_a_finished_job_reports_its_plates(self, client):
+        job_id = client.post("/api/generate", json={"set_number": "77263"}).json()["job_id"]
+        body = wait_for_completion(client, job_id)
+        assert body["plate_count"] >= 1
+        assert len(body["plates"]) == body["plate_count"]
+        assert sum(p["count"] for p in body["plates"]) == body["total_pieces"]

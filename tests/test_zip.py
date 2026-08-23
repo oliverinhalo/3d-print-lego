@@ -1,4 +1,8 @@
-"""ZIP structure and duplicate expansion (spec sections 6, 7, 33)."""
+"""ZIP structure and duplicate expansion.
+
+Per-piece STLs are opt-in now that pre-arranged plates are the default, so
+these tests pass include_stls=True explicitly.
+"""
 import json
 import zipfile
 
@@ -37,7 +41,7 @@ class TestDuplicates:
     @pytest.mark.parametrize("quantity", [1, 2, 3, 20, 100])
     def test_each_copy_becomes_its_own_file(self, zips, tmp_path, quantity):
         job = make_job({"3001": quantity})
-        result = zips.build(job, geometry_for(job, tmp_path))
+        result = zips.build(job, geometry_for(job, tmp_path), include_stls=True)
 
         with zipfile.ZipFile(result.path) as zf:
             stls = [n for n in zf.namelist() if n.endswith(".stl")]
@@ -46,7 +50,7 @@ class TestDuplicates:
 
     def test_mixed_quantities_all_appear(self, zips, tmp_path):
         job = make_job({"3001": 20, "3024": 15, "3673": 40})
-        result = zips.build(job, geometry_for(job, tmp_path))
+        result = zips.build(job, geometry_for(job, tmp_path), include_stls=True)
 
         with zipfile.ZipFile(result.path) as zf:
             names = [n for n in zf.namelist() if n.endswith(".stl")]
@@ -57,14 +61,14 @@ class TestDuplicates:
 
     def test_duplicate_files_are_byte_identical(self, zips, tmp_path):
         job = make_job({"3001": 5})
-        result = zips.build(job, geometry_for(job, tmp_path))
+        result = zips.build(job, geometry_for(job, tmp_path), include_stls=True)
         with zipfile.ZipFile(result.path) as zf:
             contents = {zf.read(n) for n in zf.namelist() if n.endswith(".stl")}
         assert len(contents) == 1, "all copies should come from one cached shape"
 
     def test_every_member_name_is_unique(self, zips, tmp_path):
         job = make_job({"3001": 30, "3024": 30})
-        result = zips.build(job, geometry_for(job, tmp_path))
+        result = zips.build(job, geometry_for(job, tmp_path), include_stls=True)
         with zipfile.ZipFile(result.path) as zf:
             names = zf.namelist()
         assert len(names) == len(set(names))
@@ -72,7 +76,7 @@ class TestDuplicates:
     def test_parts_that_sanitise_alike_do_not_collide(self, zips, tmp_path):
         job = make_job({"3001": 1, "3001x": 1},
                        {"3001": "Brick 2 x 4", "3001x": "Brick 2 x 4"})
-        result = zips.build(job, geometry_for(job, tmp_path))
+        result = zips.build(job, geometry_for(job, tmp_path), include_stls=True)
         with zipfile.ZipFile(result.path) as zf:
             assert len(zf.namelist()) == len(set(zf.namelist()))
 
@@ -80,7 +84,7 @@ class TestDuplicates:
 class TestStructure:
     def test_expected_layout(self, zips, tmp_path):
         job = make_job({"3001": 2})
-        result = zips.build(job, geometry_for(job, tmp_path))
+        result = zips.build(job, geometry_for(job, tmp_path), include_stls=True)
 
         with zipfile.ZipFile(result.path) as zf:
             names = zf.namelist()
@@ -90,14 +94,21 @@ class TestStructure:
         assert all(n.startswith(root + "/") for n in names)
         assert any(n.startswith(f"{root}/STLs/") for n in names)
 
+    def test_stls_are_omitted_by_default(self, zips, tmp_path):
+        job = make_job({"3001": 2})
+        result = zips.build(job, geometry_for(job, tmp_path))
+        with zipfile.ZipFile(result.path) as zf:
+            assert not any(n.endswith(".stl") for n in zf.namelist())
+            assert "LEGO_77263_Print_Pack/README.txt" in zf.namelist()
+
     def test_archive_is_named_after_the_set(self, zips, tmp_path):
         job = make_job({"3001": 1})
-        assert zips.build(job, geometry_for(job, tmp_path)).name == \
+        assert zips.build(job, geometry_for(job, tmp_path), include_stls=True).name == \
             "LEGO_77263_Print_Pack.zip"
 
     def test_manifest_records_quantities(self, zips, tmp_path):
         job = make_job({"3001": 12, "3024": 8})
-        result = zips.build(job, geometry_for(job, tmp_path))
+        result = zips.build(job, geometry_for(job, tmp_path), include_stls=True)
 
         with zipfile.ZipFile(result.path) as zf:
             manifest = json.loads(zf.read("LEGO_77263_Print_Pack/parts.json"))
@@ -109,16 +120,15 @@ class TestStructure:
 
     def test_readme_explains_the_workflow(self, zips, tmp_path):
         job = make_job({"3001": 1})
-        result = zips.build(job, geometry_for(job, tmp_path))
+        result = zips.build(job, geometry_for(job, tmp_path), include_stls=True)
         with zipfile.ZipFile(result.path) as zf:
             readme = zf.read("LEGO_77263_Print_Pack/README.txt").decode()
-        assert "Auto Arrange" in readme or "automatic arrange" in readme
         assert "millimetres" in readme
         assert "LDraw" in readme
 
     def test_the_archive_extracts_and_the_files_are_readable(self, zips, tmp_path):
         job = make_job({"3001": 3})
-        result = zips.build(job, geometry_for(job, tmp_path))
+        result = zips.build(job, geometry_for(job, tmp_path), include_stls=True)
         target = tmp_path / "out"
         with zipfile.ZipFile(result.path) as zf:
             zf.extractall(target)
@@ -136,7 +146,7 @@ class TestPartialResults:
         job.parts["9999"].error = "No 3D model is available for this part."
 
         geometry = {"3001": write_cube_stl(tmp_path / "3001.stl")}
-        result = zips.build(job, geometry)
+        result = zips.build(job, geometry, include_stls=True)
 
         with zipfile.ZipFile(result.path) as zf:
             names = [n for n in zf.namelist() if n.endswith(".stl")]
@@ -148,7 +158,7 @@ class TestPartialResults:
             self, zips, tmp_path):
         job = make_job({"9999": 3})
         job.parts["9999"].status = PartStatus.FAILED
-        result = zips.build(job, {})
+        result = zips.build(job, {}, include_stls=True)
         with zipfile.ZipFile(result.path) as zf:
             assert zf.testzip() is None
             assert "LEGO_77263_Print_Pack/README.txt" in zf.namelist()
@@ -157,7 +167,7 @@ class TestPartialResults:
 class TestCleanup:
     def test_job_directories_are_removable(self, zips, tmp_path):
         job = make_job({"3001": 1})
-        result = zips.build(job, geometry_for(job, tmp_path))
+        result = zips.build(job, geometry_for(job, tmp_path), include_stls=True)
         zips.cleanup_job(job.id)
         assert not result.path.exists()
 

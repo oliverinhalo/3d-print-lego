@@ -50,6 +50,23 @@ class Settings(BaseSettings):
     #: "native" keeps LDraw orientation (studs up); "flat" lays parts down.
     orient_strategy: str = "native"
 
+    # --- build plates ---
+    #: Printer whose bed size is used when packing plates. See BED_PRESETS.
+    bed_preset: str = "bambu_p1"
+    #: Gap left between parts on a plate, in millimetres.
+    plate_gap_mm: float = Field(default=3.0, ge=0.0, le=20.0)
+    #: Clear margin at the edge of the bed, in millimetres.
+    plate_margin_mm: float = Field(default=5.0, ge=0.0, le=50.0)
+    #: Default colour grouping: "none", "family" or "exact".
+    color_mode: str = "family"
+    #: Write pre-arranged 3MF plate files into the download.
+    build_plates: bool = True
+    #: Also write one STL per physical piece. Off by default now that plates
+    #: exist: a large set is hundreds of files that no slicer enjoys importing.
+    include_stls: bool = False
+    #: Refuse to build more than this many plates in one job.
+    max_plates: int = Field(default=60, ge=1)
+
     # --- providers ---
     set_provider: str = "rebrickable_csv"
     model_provider: str = "ldraw"

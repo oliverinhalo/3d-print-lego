@@ -51,8 +51,8 @@ export function SetPreview({ set, job, estimatedFiles }: Props) {
           <div className="label">Unique</div>
         </div>
         <div className="stat">
-          <div className="value">{estimatedFiles || '—'}</div>
-          <div className="label">STL files</div>
+          <div className="value">{job?.plate_count || estimatedFiles || '—'}</div>
+          <div className="label">{job?.plate_count ? 'Plates' : 'Pieces ready'}</div>
         </div>
       </div>
     </aside>

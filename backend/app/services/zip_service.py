@@ -44,31 +44,63 @@ class ZipResult:
 
 
 def build_readme(job: Job, instance_count: int, unique_count: int,
-                 failed: list[PrintPart]) -> str:
+                 failed: list[PrintPart], *, plate_count: int = 0,
+                 include_stls: bool = False) -> str:
     lego_set = job.lego_set
     set_line = (f"{lego_set.name}  (#{lego_set.display_number})"
                 if lego_set else job.query)
+    total_pieces = sum(p.quantity for p in job.parts.values()
+                       if p.status in (PartStatus.READY, PartStatus.CACHED))
+
     lines = [
         "=" * 68,
         f"  {set_line}",
         "  Printable part pack",
         "=" * 68,
         "",
-        f"  {instance_count} STL files      ({unique_count} unique shapes)",
-        f"  Generated:      {time.strftime('%Y-%m-%d %H:%M:%S')}",
-        "",
-        "HOW TO PRINT",
-        "-" * 68,
-        "  1. Extract this ZIP.",
-        "  2. Open the STLs folder.",
-        "  3. Select every file (Ctrl+A / Cmd+A).",
-        "  4. Drag them into your slicer:",
-        "     Bambu Studio, OrcaSlicer, Cura or PrusaSlicer.",
-        "  5. Use the slicer's automatic arrange to fill the build plate.",
-        "",
-        "  Every file is one physical piece. A part needed 12 times appears",
-        "  as 12 separate files, so the slicer gives you 12 objects.",
-        "",
+        f"  {total_pieces} pieces      ({unique_count} unique shapes)",
+        f"  Generated:    {time.strftime('%Y-%m-%d %H:%M:%S')}",
+    ]
+    if plate_count:
+        lines.append(f"  Build plates: {plate_count}")
+    lines.append("")
+
+    if plate_count:
+        lines += [
+            "HOW TO PRINT",
+            "-" * 68,
+            "  1. Extract this ZIP and open the Plates folder.",
+            "  2. Open ONE plate file, for example Plate_01.3mf, by",
+            "     double-clicking it or dragging it into your slicer.",
+            "  3. Everything is already arranged on the plate. Slice and print.",
+            "  4. Repeat for each plate.",
+            "",
+            "  Do NOT select all the plates at once. Each file is one plateful",
+            "  of parts; open them one at a time.",
+            "",
+            "  You do not need to press Auto Arrange. The parts are already",
+            "  positioned, spaced and inside the printable area.",
+            "",
+        ]
+        if job.color_mode != "none":
+            grouping = ("exact LEGO colour" if job.color_mode == "exact"
+                        else "colour family")
+            lines += [
+                f"  Plates are grouped by {grouping}, and each plate is named",
+                "  after its colour, so one filament prints a whole plate.",
+                "",
+            ]
+    if include_stls:
+        lines += [
+            "INDIVIDUAL STL FILES",
+            "-" * 68,
+            "  The STLs folder holds one STL per physical piece, if you would",
+            "  rather arrange them yourself. With a large set this is hundreds",
+            "  of files and most slicers struggle to import them all at once.",
+            "",
+        ]
+
+    lines += [
         "ABOUT THE MODELS",
         "-" * 68,
         "  Units:      millimetres (Z is up, parts laid flat).",
@@ -87,6 +119,21 @@ def build_readme(job: Job, instance_count: int, unique_count: int,
         "  Group, which does not sponsor or endorse this project.",
         "",
     ]
+
+    if job.oversized:
+        names = sorted({i.part_num for i in job.oversized})
+        lines += [
+            "PARTS TOO BIG FOR THIS PRINTER",
+            "-" * 68,
+            f"  {len(names)} part(s) do not fit the selected bed and were left out:",
+            "",
+            *(f"  - {name}" for name in names),
+            "",
+            "  Generate again with a larger printer selected, or print these",
+            "  separately after splitting them.",
+            "",
+        ]
+
     if failed:
         lines += [
             "PARTS THAT COULD NOT BE GENERATED",
@@ -115,7 +162,13 @@ def build_parts_manifest(job: Job, instances: dict[str, int]) -> dict:
             "total_pieces": job.total_pieces,
             "stl_files": sum(instances.values()),
             "failed_parts": len(job.failed_parts),
+            "plates": len(job.plates),
         },
+        "options": {
+            "color_mode": job.color_mode,
+            "bed_preset": job.bed_preset,
+        },
+        "plates": [p.to_dict() for p in job.plates],
         "parts": [
             {
                 **part.to_dict(),
@@ -147,11 +200,17 @@ class ZipService:
         return path
 
     def build(self, job: Job, geometry_paths: dict[str, Path],
-              progress: Callable[[int, int], None] | None = None) -> ZipResult:
+              progress: Callable[[int, int], None] | None = None,
+              *, plate_files: dict[int, Path] | None = None,
+              include_stls: bool = False) -> ZipResult:
         """Write the print pack for ``job``.
 
-        ``geometry_paths`` maps ``part_num`` -> cached STL path.  Each part is
-        expanded into ``quantity`` files inside the archive.
+        ``geometry_paths`` maps ``part_num`` -> cached STL path.
+        ``plate_files`` maps plate index -> a pre-arranged 3MF.
+
+        The plates are the intended way to print: each one opens ready to
+        slice. Individual STLs are optional because a large set is hundreds of
+        files, which is exactly the import problem the plates remove.
         """
         lego_set = job.lego_set
         set_number = lego_set.display_number if lego_set else "set"
@@ -175,7 +234,14 @@ class ZipService:
         # text members only.
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED,
                              allowZip64=True) as zf:
-            for part in printable:
+            # Pre-arranged plates first: this is the path most people want.
+            for index in sorted(plate_files or {}):
+                source = plate_files[index]
+                if source.exists():
+                    _write_member(zf, f"{basename}/Plates/{source.name}", source)
+                    written += 1
+
+            for part in (printable if include_stls else []):
                 source = geometry_paths[part.part_num]
                 if not source.exists():
                     continue
@@ -189,12 +255,19 @@ class ZipService:
                         progress(written, total_instances)
                 instances[part.part_num] = part.quantity
 
+            if not include_stls:
+                # Quantities still belong in the manifest even when the
+                # per-piece STLs are not written.
+                instances = {p.part_num: p.quantity for p in printable}
+
             manifest = build_parts_manifest(job, instances)
             zf.writestr(f"{basename}/parts.json",
                         json.dumps(manifest, indent=2),
                         compress_type=zipfile.ZIP_DEFLATED)
             zf.writestr(f"{basename}/README.txt",
-                        build_readme(job, written, len(printable), job.failed_parts),
+                        build_readme(job, written, len(printable), job.failed_parts,
+                                     plate_count=len(plate_files or {}),
+                                     include_stls=include_stls),
                         compress_type=zipfile.ZIP_DEFLATED)
 
         size = zip_path.stat().st_size
@@ -204,7 +277,7 @@ class ZipService:
                 f"generated archive is {size} bytes, over the {self.max_bytes} byte limit")
         if progress:
             progress(written, total_instances)
-        return ZipResult(zip_path, zip_path.name, size, written + 2, written)
+        return ZipResult(zip_path, zip_path.name, size, written + 2, total_instances)
 
     def cleanup_job(self, job_id: str) -> None:
         try:

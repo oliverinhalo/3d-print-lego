@@ -25,11 +25,14 @@ from pathlib import Path
 
 from ..config import Settings
 from ..models.job import Job, JobStatus, STAGE_LABELS, Stage
-from ..models.part import GeometryRef, PartStatus, PrintPart
+from ..models.part import ColorCount, GeometryRef, PartStatus, PrintPart
 from ..providers.base import ProviderError, ProviderUnavailable, SetNotFound
 from ..providers.registry import ProviderRegistry
 from ..services.cache_service import CacheService
+from ..services.color_service import ColorMode, ColorService, group_key, group_swatch
 from ..services.job_service import JobManager
+from ..services.plate_service import PackItem, Plate, bed_size, pack_items
+from ..services.threemf_service import plate_filename, write_plate_3mf
 from ..services.zip_service import ZipService
 
 log = logging.getLogger(__name__)
@@ -46,6 +49,7 @@ class GenerationWorker:
         self.cache = cache
         self.zips = zips
         self.jobs = jobs
+        self.colors = ColorService(registry.db) if hasattr(registry, "db") else None
 
     # --- helpers ----------------------------------------------------------
     # ``/`` marks these arguments positional-only: event payloads legitimately
@@ -141,12 +145,24 @@ class GenerationWorker:
         self._set_stage(job, Stage.CONVERTING)
         geometry_paths = await self._convert_all(job, groups)
 
-        # 6. duplicate per quantity and build the ZIP -------------------------
+        # 6. arrange the pieces onto build plates -----------------------------
+        self._set_stage(job, Stage.ARRANGING)
+        plate_files: dict[int, Path] = {}
+        if self.settings.build_plates:
+            plates, oversized = await asyncio.to_thread(self._arrange, job, geometry_paths)
+            job.plates = plates
+            job.oversized = oversized
+            self._emit(job, "plates_ready", plate_count=len(plates),
+                       plates=[p.to_dict() for p in plates],
+                       oversized=sorted({i.part_num for i in oversized}))
+            plate_files = await asyncio.to_thread(self._write_plates, job, geometry_paths)
+
+        # 7. duplicate per quantity and build the ZIP -------------------------
         self._set_stage(job, Stage.DUPLICATING,
                         files=sum(p.quantity for p in job.parts.values()
                                   if p.part_num in geometry_paths))
         self._set_stage(job, Stage.BUILDING_ZIP)
-        result = await asyncio.to_thread(self._build_zip, job, geometry_paths)
+        result = await asyncio.to_thread(self._build_zip, job, geometry_paths, plate_files)
 
         job.zip_path = str(result.path)
         job.zip_name = result.name
@@ -184,15 +200,27 @@ class GenerationWorker:
                 continue                       # stickers, instructions, cloth
             existing = parts.get(entry.part_num)
             if existing is None:
-                parts[entry.part_num] = PrintPart(
+                existing = PrintPart(
                     part_num=entry.part_num, name=entry.name,
-                    quantity=entry.quantity, img_url=entry.img_url,
-                    color_names=[entry.color_name] if entry.color_name else [])
-            else:
-                existing.quantity += entry.quantity
-                if entry.color_name and entry.color_name not in existing.color_names:
-                    existing.color_names.append(entry.color_name)
+                    quantity=0, img_url=entry.img_url)
+                parts[entry.part_num] = existing
+            existing.quantity += entry.quantity
+            if entry.color_name and entry.color_name not in existing.color_names:
+                existing.color_names.append(entry.color_name)
+            self._record_color(existing, entry)
         return parts
+
+    def _record_color(self, part: PrintPart, entry) -> None:
+        """Keep the per-colour split so plates can be single-filament."""
+        color = self.colors.get(entry.color_id) if self.colors else None
+        name = entry.color_name or (color.name if color else "Unknown")
+        rgb = color.rgb if color else ""
+        for existing in part.colors:
+            if existing.color_id == entry.color_id:
+                existing.quantity += entry.quantity
+                return
+        part.colors.append(ColorCount(color_id=entry.color_id, color_name=name,
+                                      rgb=rgb, quantity=entry.quantity))
 
     def _resolve_geometries(self, job: Job) -> None:
         """Map each part onto the best available shape, or mark it failed."""
@@ -282,11 +310,81 @@ class GenerationWorker:
                     time.sleep(RETRY_BASE_DELAY * (2 ** attempt))
         raise last_error or RuntimeError("conversion failed")
 
-    def _build_zip(self, job: Job, geometry_paths: dict[str, Path]):
+    def _build_zip(self, job: Job, geometry_paths: dict[str, Path],
+                   plate_files: dict[int, Path] | None = None):
         return self.zips.build(
-            job, geometry_paths,
+            job, geometry_paths, plate_files=plate_files,
+            include_stls=self.settings.include_stls,
             progress=lambda written, total: self._emit(
                 job, "zip_progress", written=written, total=total))
+
+    # --- build plates -----------------------------------------------------
+    def _arrange(self, job: Job, geometry_paths: dict[str, Path]):
+        """Turn ready parts into one PackItem per physical piece, then pack.
+
+        Grouping happens here: under "family" or "exact" a plate holds a
+        single colour group, so it can be printed without a filament change.
+        """
+        try:
+            mode = ColorMode(job.color_mode)
+        except ValueError:
+            mode = ColorMode.FAMILY
+
+        items: list[PackItem] = []
+        for part in job.parts.values():
+            if part.part_num not in geometry_paths or not part.geometry:
+                continue
+            dimensions = part.dimensions_mm or (10.0, 10.0, 10.0)
+
+            # Walk the colour split so each piece carries its own group. If a
+            # part has no colour data, everything falls into one bucket.
+            counts = part.colors or [ColorCount(None, "Unknown", "", part.quantity)]
+            for count in counts:
+                color = self.colors.get(count.color_id) if self.colors else None
+                bucket = group_key(color, mode)
+                swatch = group_swatch(color, mode) or count.rgb
+                for _ in range(count.quantity):
+                    items.append(PackItem(
+                        part_num=part.part_num, name=part.name,
+                        geometry_key=part.geometry.cache_key,
+                        width=dimensions[0], depth=dimensions[1], height=dimensions[2],
+                        color_name=count.color_name, color_rgb=swatch, group=bucket))
+
+        plates, oversized = pack_items(
+            items, bed_size(job.bed_preset),
+            gap=self.settings.plate_gap_mm, margin=self.settings.plate_margin_mm,
+            group_plates=mode is not ColorMode.NONE)
+
+        if len(plates) > self.settings.max_plates:
+            log.warning("job %s produced %d plates, capping at %d",
+                        job.id, len(plates), self.settings.max_plates)
+            plates = plates[:self.settings.max_plates]
+        return plates, oversized
+
+    def _write_plates(self, job: Job, geometry_paths: dict[str, Path]) -> dict[int, Path]:
+        """Write one 3MF per plate into the job's working directory."""
+        by_key: dict[str, Path] = {}
+        for part in job.parts.values():
+            if part.geometry and part.part_num in geometry_paths:
+                by_key[part.geometry.cache_key] = geometry_paths[part.part_num]
+
+        directory = self.zips.job_directory(job.id) / "plates"
+        directory.mkdir(parents=True, exist_ok=True)
+        written: dict[int, Path] = {}
+        title = job.lego_set.name if job.lego_set else job.query
+
+        for plate in job.plates:
+            name = plate_filename(plate, len(job.plates))
+            path = directory / name
+            try:
+                write_plate_3mf(plate, by_key, path, title=f"{title} - plate {plate.index}")
+            except Exception:                                  # noqa: BLE001
+                log.exception("failed to write plate %d for job %s", plate.index, job.id)
+                continue
+            written[plate.index] = path
+            self._emit(job, "plate_written", index=plate.index, name=name,
+                       total=len(job.plates))
+        return written
 
     # --- retry of failed parts -------------------------------------------
     async def retry_failed(self, job: Job) -> None:

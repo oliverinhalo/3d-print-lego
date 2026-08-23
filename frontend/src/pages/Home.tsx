@@ -1,22 +1,47 @@
-import { useRef, useState } from 'react'
-import { searchSets, startGeneration } from '../lib/api'
-import type { LegoSet } from '../types'
+import { useEffect, useRef, useState } from 'react'
+import { PrintOptions } from '../components/PrintOptions'
+import { getOptions, searchSets, startGeneration } from '../lib/api'
+import type { ColorMode, LegoSet, Options } from '../types'
 
 const STEPS = [
   { num: '01', label: 'Enter your set', detail: 'Any LEGO set number' },
   { num: '02', label: 'We find every part', detail: 'Full inventory, deduplicated' },
   { num: '03', label: 'Models prepared', detail: 'Validated, millimetre-accurate' },
-  { num: '04', label: 'Download', detail: 'One clean ZIP' },
-  { num: '05', label: 'Drag into slicer', detail: 'Bambu, Orca, Cura, Prusa' },
-  { num: '06', label: 'Auto Arrange', detail: 'Then print' },
+  { num: '04', label: 'Packed onto plates', detail: 'Grouped by colour' },
+  { num: '05', label: 'Open a plate', detail: 'Already arranged' },
+  { num: '06', label: 'Print', detail: 'No arranging needed' },
 ]
 
-export function Home({ onStarted }: { onStarted: (jobId: string) => void }) {
-  const [value, setValue] = useState('')
+interface HomeProps {
+  onStarted: (jobId: string) => void
+  onBrowse: () => void
+  preset?: string
+}
+
+export function Home({ onStarted, onBrowse, preset }: HomeProps) {
+  const [value, setValue] = useState(preset ?? '')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [suggestions, setSuggestions] = useState<LegoSet[]>([])
+  const [options, setOptions] = useState<Options | null>(null)
+  const [colorMode, setColorMode] = useState<ColorMode>('family')
+  const [bedPreset, setBedPreset] = useState('bambu_p1')
+  const [showOptions, setShowOptions] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // A set chosen on the browse screen lands here ready to generate.
+  useEffect(() => { if (preset) setValue(preset) }, [preset])
+
+  // Defaults come from the server so the UI never hard-codes printer lists.
+  useEffect(() => {
+    getOptions()
+      .then(loaded => {
+        setOptions(loaded)
+        setColorMode(loaded.defaults.color_mode)
+        setBedPreset(loaded.defaults.bed_preset)
+      })
+      .catch(() => { /* the defaults above are fine on their own */ })
+  }, [])
 
   async function submit(setNumber: string) {
     const query = setNumber.trim()
@@ -29,7 +54,10 @@ export function Home({ onStarted }: { onStarted: (jobId: string) => void }) {
     setError('')
     setSuggestions([])
     try {
-      const { job_id } = await startGeneration(query)
+      const { job_id } = await startGeneration(query, {
+        color_mode: colorMode,
+        bed_preset: bedPreset,
+      })
       onStarted(job_id)
     } catch (err) {
       const message = (err as Error).message
@@ -56,6 +84,10 @@ export function Home({ onStarted }: { onStarted: (jobId: string) => void }) {
 
         <form className="search"
               onSubmit={(e) => { e.preventDefault(); void submit(value) }}>
+          <button type="button" className="browse-link" onClick={onBrowse}>
+            Browse all LEGO sets →
+          </button>
+
           <div className="search-field">
             <span className="hash">#</span>
             <input
@@ -76,6 +108,22 @@ export function Home({ onStarted }: { onStarted: (jobId: string) => void }) {
           <button className="btn-primary" type="submit" disabled={busy}>
             {busy ? 'Starting…' : 'Generate Printable Set'}
           </button>
+
+          <button type="button" className="disclosure"
+                  onClick={() => setShowOptions(v => !v)}
+                  aria-expanded={showOptions}>
+            {showOptions ? 'Hide options' : 'Options'}
+          </button>
+
+          {showOptions && (
+            <PrintOptions
+              options={options}
+              colorMode={colorMode}
+              bedPreset={bedPreset}
+              onColorMode={setColorMode}
+              onBedPreset={setBedPreset}
+            />
+          )}
         </form>
 
         {suggestions.length > 0 && (
