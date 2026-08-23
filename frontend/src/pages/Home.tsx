@@ -26,7 +26,8 @@ export function Home({ onStarted, onBrowse, preset }: HomeProps) {
   const [options, setOptions] = useState<Options | null>(null)
   const [colorMode, setColorMode] = useState<ColorMode>('family')
   const [bedPreset, setBedPreset] = useState('bambu_p1')
-  const [plateOutput, setPlateOutput] = useState<PlateOutput>('both')
+  const [plateOutput, setPlateOutput] = useState<PlateOutput>('separate')
+  const [maxColors, setMaxColors] = useState(4)
   const [showOptions, setShowOptions] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -41,6 +42,7 @@ export function Home({ onStarted, onBrowse, preset }: HomeProps) {
         setColorMode(loaded.defaults.color_mode)
         setBedPreset(loaded.defaults.bed_preset)
         setPlateOutput(loaded.defaults.plate_output)
+        setMaxColors(loaded.defaults.max_colors)
       })
       .catch(() => { /* the defaults above are fine on their own */ })
   }, [])
@@ -60,6 +62,7 @@ export function Home({ onStarted, onBrowse, preset }: HomeProps) {
         color_mode: colorMode,
         bed_preset: bedPreset,
         plate_output: plateOutput,
+        max_colors: maxColors,
       })
       onStarted(job_id)
     } catch (err) {
@@ -124,7 +127,9 @@ export function Home({ onStarted, onBrowse, preset }: HomeProps) {
               colorMode={colorMode}
               bedPreset={bedPreset}
               plateOutput={plateOutput}
+              maxColors={maxColors}
               onColorMode={setColorMode}
+              onMaxColors={setMaxColors}
               onBedPreset={setBedPreset}
               onPlateOutput={setPlateOutput}
             />

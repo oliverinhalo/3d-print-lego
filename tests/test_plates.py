@@ -551,3 +551,88 @@ class TestEstimates:
         assert data["cost"] == pytest.approx(estimate.grams(profile) / 1000 * 20, abs=0.01)
         assert data["metres"] > 0
         assert data["currency"] == "£"
+
+
+class TestColorLimit:
+    """Merging similar colours down to a filament budget."""
+
+    def _groups(self):
+        from app.services.color_service import ColorGroup
+        # The real family breakdown of set 77263.
+        return [ColorGroup('Red', 'C91A09', 31), ColorGroup('Yellow', 'F2CD37', 26),
+                ColorGroup('Blue', '0055BF', 38), ColorGroup('Purple', '81007B', 2),
+                ColorGroup('Brown', '583927', 3), ColorGroup('Tan', 'E4CD9E', 4),
+                ColorGroup('White', 'FFFFFF', 77), ColorGroup('Light Grey', '9BA19D', 22),
+                ColorGroup('Dark Grey', '6D6E5C', 12), ColorGroup('Black', '05131D', 116),
+                ColorGroup('Transparent', 'C0C0C0', 12)]
+
+    @pytest.mark.parametrize("limit", [1, 2, 3, 4, 5, 6, 8])
+    def test_the_limit_is_respected(self, limit):
+        from app.services.color_service import merge_to_limit
+        kept, _ = merge_to_limit(self._groups(), limit)
+        assert len(kept) == min(limit, len(self._groups()))
+
+    @pytest.mark.parametrize("limit", [1, 2, 3, 4, 6, 8])
+    def test_no_piece_is_ever_lost(self, limit):
+        from app.services.color_service import merge_to_limit
+        groups = self._groups()
+        total = sum(g.pieces for g in groups)
+        kept, _ = merge_to_limit(groups, limit)
+        assert sum(g.pieces for g in kept) == total
+
+    def test_every_original_colour_maps_to_a_surviving_one(self):
+        from app.services.color_service import merge_to_limit
+        groups = self._groups()
+        kept, mapping = merge_to_limit(groups, 4)
+        assert set(mapping) == {g.name for g in groups}
+        assert set(mapping.values()) <= {g.name for g in kept}
+
+    def test_no_limit_changes_nothing(self):
+        from app.services.color_service import merge_to_limit
+        groups = self._groups()
+        for limit in (0, 99):
+            kept, mapping = merge_to_limit(groups, limit)
+            assert len(kept) == len(groups)
+            assert all(k == v for k, v in mapping.items())
+
+    def test_merging_does_not_mutate_the_input(self):
+        from app.services.color_service import merge_to_limit
+        groups = self._groups()
+        before = [(g.name, g.pieces, list(g.members)) for g in groups]
+        merge_to_limit(groups, 3)
+        assert [(g.name, g.pieces, list(g.members)) for g in groups] == before
+
+    def test_the_big_colours_survive(self):
+        """You should still be printing black and white, not two odd shades."""
+        from app.services.color_service import merge_to_limit
+        kept, _ = merge_to_limit(self._groups(), 4)
+        names = {g.name for g in kept}
+        assert "Black" in names and "White" in names
+
+    def test_distinct_hues_are_not_collapsed_early(self):
+        """Blue must not fold into black while stray colours remain."""
+        from app.services.color_service import merge_to_limit
+        kept, mapping = merge_to_limit(self._groups(), 4)
+        assert mapping["Blue"] == "Blue"
+        assert mapping["Red"] == "Red"
+        # The two-piece purple is exactly the kind of stray that should go.
+        assert mapping["Purple"] != "Purple"
+
+    def test_transparent_resists_merging(self):
+        """Translucent filament is not interchangeable with solid."""
+        from app.services.color_service import merge_to_limit
+        kept, mapping = merge_to_limit(self._groups(), 6)
+        assert mapping["Transparent"] == "Transparent"
+
+    def test_perceptual_distance_beats_raw_rgb(self):
+        from app.services.color_service import color_distance
+        # Navy and green are equidistant in RGB but obviously different.
+        assert color_distance("C91A09", "0055BF") > color_distance("FFFFFF", "9BA19D")
+        assert color_distance("FFFFFF", "FFFFFF") == pytest.approx(0.0)
+
+    def test_bad_colour_values_do_not_raise(self):
+        from app.services.color_service import ColorGroup, merge_to_limit
+        groups = [ColorGroup("A", "", 5), ColorGroup("B", "zzzz", 3),
+                  ColorGroup("C", "FFFFFF", 1)]
+        kept, _ = merge_to_limit(groups, 2)
+        assert len(kept) == 2

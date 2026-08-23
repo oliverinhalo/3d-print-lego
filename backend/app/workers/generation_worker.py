@@ -29,7 +29,8 @@ from ..models.part import ColorCount, GeometryRef, PartStatus, PrintPart
 from ..providers.base import ProviderError, ProviderUnavailable, SetNotFound
 from ..providers.registry import ProviderRegistry
 from ..services.cache_service import CacheService
-from ..services.color_service import ColorMode, ColorService, group_key, group_swatch
+from ..services.color_service import (ColorGroup, ColorMode, ColorService, group_key,
+                                     group_swatch, merge_to_limit)
 from ..services.estimate_service import Estimate, PrintProfile, estimate_part
 from ..services.job_service import JobManager
 from ..services.plate_service import (PackItem, Plate, bed_height, bed_size,
@@ -404,6 +405,10 @@ class GenerationWorker:
                         width=dimensions[0], depth=dimensions[1], height=dimensions[2],
                         color_name=count.color_name, color_rgb=swatch, group=bucket))
 
+        # Most people do not own a dozen filaments, so fold the closest
+        # colours together until the set needs no more than max_colors.
+        items, job.color_groups = self._limit_colors(items, job, mode)
+
         plates, oversized = pack_items(
             items, bed_size(job.bed_preset),
             gap=self.settings.plate_gap_mm, margin=self.settings.plate_margin_mm,
@@ -414,6 +419,37 @@ class GenerationWorker:
                         job.id, len(plates), self.settings.max_plates)
             plates = plates[:self.settings.max_plates]
         return plates, oversized
+
+    def _limit_colors(self, items: list[PackItem], job: Job,
+                      mode: ColorMode) -> tuple[list[PackItem], list[dict]]:
+        """Merge similar colour groups until at most ``max_colors`` remain."""
+        if mode is ColorMode.NONE or not items:
+            return items, []
+
+        tally: dict[str, ColorGroup] = {}
+        for item in items:
+            group = tally.get(item.group)
+            if group is None:
+                tally[item.group] = ColorGroup(item.group,
+                                               item.color_rgb or "808080", 1)
+            else:
+                group.pieces += 1
+
+        limit = job.max_colors
+        surviving, mapping = merge_to_limit(list(tally.values()), limit)
+        if mapping:
+            swatches = {g.name: g.rgb for g in surviving}
+            for item in items:
+                merged = mapping.get(item.group, item.group)
+                if merged != item.group:
+                    item.group = merged
+                    item.color_rgb = swatches.get(merged, item.color_rgb)
+
+        if limit and len(tally) > len(surviving):
+            log.info("job %s: merged %d colours down to %d",
+                     job.id, len(tally), len(surviving))
+        return items, [g.to_dict() for g in
+                       sorted(surviving, key=lambda g: -g.pieces)]
 
     def _write_plates(self, job: Job,
                       geometry_paths: dict[str, Path]) -> tuple[dict[int, Path], Path | None]:

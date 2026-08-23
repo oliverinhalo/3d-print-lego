@@ -22,6 +22,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export interface GenerateOptions {
   color_mode?: ColorMode
+  max_colors?: number
   bed_preset?: string
   plate_output?: PlateOutput
 }

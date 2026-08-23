@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     plate_margin_mm: float = Field(default=5.0, ge=0.0, le=50.0)
     #: Default colour grouping: "none", "family" or "exact".
     color_mode: str = "family"
+    #: Most filament colours a job may need. Similar colours are merged until
+    #: no more than this many remain. 0 means no limit.
+    max_colors: int = Field(default=4, ge=0, le=32)
     #: Write pre-arranged 3MF plate files into the download.
     build_plates: bool = True
     #: How plate files are delivered:

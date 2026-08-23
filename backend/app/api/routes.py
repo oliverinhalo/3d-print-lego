@@ -52,6 +52,9 @@ class GenerateRequest(BaseModel):
     color_mode: Literal["none", "family", "exact"] | None = Field(
         None, description='How to group parts onto plates: ignore colour, '
                           'group similar colours, or one group per exact colour')
+    max_colors: int | None = Field(
+        None, ge=0, le=32,
+        description="Most filament colours to need; similar ones merge. 0 = no limit")
     bed_preset: str | None = Field(
         None, max_length=32, description="Printer whose bed size to arrange for")
     plate_output: Literal["separate", "project", "both"] | None = Field(
@@ -89,6 +92,8 @@ async def generate(payload: GenerateRequest, request: Request,
     job = Job(query=payload.set_number.strip(), set_num=set_num,
               include_spares=payload.include_spares,
               color_mode=payload.color_mode or settings.color_mode,
+              max_colors=(settings.max_colors if payload.max_colors is None
+                          else payload.max_colors),
               bed_preset=bed,
               plate_output=payload.plate_output or settings.plate_output)
     context.jobs.register(job)
@@ -308,9 +313,11 @@ async def options(context: AppContext = Depends(get_context)) -> dict:
             {"id": "exact", "label": "Exact colours",
              "detail": "One group per LEGO colour code"},
         ],
+        "color_limits": [1, 2, 3, 4, 5, 6, 8, 12, 0],
         "defaults": {
             "bed_preset": context.settings.bed_preset,
             "color_mode": context.settings.color_mode,
+            "max_colors": context.settings.max_colors,
             "plate_output": context.settings.plate_output,
         },
     }

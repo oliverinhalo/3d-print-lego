@@ -184,3 +184,153 @@ class ColorService:
         for color in self.colors.values():
             grouped.setdefault(color.family, []).append(color)
         return grouped
+
+
+# --- limiting how many colours you actually have to print ------------------
+#
+# A set can easily need a dozen filament colours. Most people have far fewer,
+# so groups are merged until only ``max_groups`` remain — always merging the
+# two that look most alike, so what you lose is the distinction between
+# tan and nougat rather than between red and blue.
+
+
+def _srgb_to_linear(channel: float) -> float:
+    return channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+
+
+def to_lab(rgb: str) -> tuple[float, float, float]:
+    """Convert an sRGB hex string to CIELAB.
+
+    Distances in Lab track how different two colours *look*, which plain RGB
+    distance does not: #000080 and #008000 are equally far apart in RGB, but
+    nobody would confuse navy with green.
+    """
+    text = (rgb or "").strip().lstrip("#")
+    if len(text) != 6:
+        return (50.0, 0.0, 0.0)
+    try:
+        r, g, b = (int(text[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    except ValueError:
+        return (50.0, 0.0, 0.0)
+
+    r, g, b = _srgb_to_linear(r), _srgb_to_linear(g), _srgb_to_linear(b)
+    # sRGB D65 -> XYZ
+    x = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047
+    y = (r * 0.2126 + g * 0.7152 + b * 0.0722)
+    z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883
+
+    def f(t: float) -> float:
+        return t ** (1 / 3) if t > 0.008856 else (7.787 * t) + (16 / 116)
+
+    fx, fy, fz = f(x), f(y), f(z)
+    return (116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz))
+
+
+def _lab_distance(first: tuple[float, float, float],
+                  second: tuple[float, float, float]) -> float:
+    return ((first[0] - second[0]) ** 2 + (first[1] - second[1]) ** 2
+            + (first[2] - second[2]) ** 2) ** 0.5
+
+
+def color_distance(first: str, second: str) -> float:
+    """Perceptual distance between two hex colours (CIE76 delta-E)."""
+    return _lab_distance(to_lab(first), to_lab(second))
+
+
+#: Added to the distance between a transparent group and an opaque one.
+#: Translucent filament is not interchangeable with solid, so these merge
+#: only when the colour budget leaves no alternative.
+TRANSPARENT_PENALTY = 200.0
+
+
+@dataclass(slots=True)
+class ColorGroup:
+    """One filament colour: what it is called, its swatch, and how much of it."""
+
+    name: str
+    rgb: str
+    pieces: int
+    members: list[str] = None  # type: ignore[assignment]
+    #: Piece-weighted centroid in Lab. Kept alongside the swatch so that a
+    #: merged group is compared by what it now contains rather than by
+    #: whichever member happened to name it — without this, greys chain into
+    #: white and drag unrelated colours along with them.
+    centroid: tuple[float, float, float] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.members is None:
+            self.members = [self.name]
+        if self.centroid is None:
+            self.centroid = to_lab(self.rgb)
+
+    @property
+    def is_transparent(self) -> bool:
+        return self.name == "Transparent" or "Trans" in self.members[0]
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "rgb": self.rgb, "pieces": self.pieces,
+                "members": sorted(self.members)}
+
+
+def merge_to_limit(groups: list[ColorGroup],
+                   max_groups: int) -> tuple[list[ColorGroup], dict[str, str]]:
+    """Merge the most similar groups until at most ``max_groups`` remain.
+
+    Returns the surviving groups and a mapping from every original group name
+    to the one it ended up in.
+
+    Merging is greedy, and the cost of a merge is *how wrong it looks in
+    total*: the perceptual distance multiplied by the number of pieces that
+    would change colour. Distance alone gets this badly wrong — it will
+    happily fold 38 blue pieces into black because the two are nominally
+    close, while leaving two stray purple bricks on a plate of their own.
+    Weighting by piece count absorbs the strays first, which is what you
+    actually want when the goal is "I only own four colours".
+
+    The surviving group keeps the name and swatch of whichever side has more
+    pieces, so the filament you load is the one most of those parts need.
+    """
+    if max_groups <= 0 or len(groups) <= max_groups:
+        return list(groups), {g.name: g.name for g in groups}
+
+    surviving = [ColorGroup(g.name, g.rgb, g.pieces, list(g.members), g.centroid)
+                 for g in groups]
+    mapping = {g.name: g.name for g in groups}
+
+    while len(surviving) > max_groups:
+        best: tuple[float, int, int] | None = None
+        for i in range(len(surviving)):
+            for j in range(i + 1, len(surviving)):
+                first, second = surviving[i], surviving[j]
+                distance = _lab_distance(first.centroid, second.centroid)
+                if first.is_transparent != second.is_transparent:
+                    distance += TRANSPARENT_PENALTY
+                # Only the smaller pile actually changes colour, so that is
+                # what the mistake costs.
+                recoloured = min(first.pieces, second.pieces)
+                cost = distance * max(recoloured, 1)
+                if best is None or cost < best[0]:
+                    best = (cost, i, j)
+        if best is None:
+            break
+
+        _distance, i, j = best
+        first, second = surviving[i], surviving[j]
+        # The bigger pile keeps its identity; ties go to the earlier group so
+        # the outcome does not depend on dictionary ordering.
+        keeper, absorbed = ((first, second) if first.pieces >= second.pieces
+                            else (second, first))
+        total = keeper.pieces + absorbed.pieces
+        keeper.centroid = tuple(
+            (k * keeper.pieces + a * absorbed.pieces) / max(total, 1)
+            for k, a in zip(keeper.centroid, absorbed.centroid))  # type: ignore[assignment]
+        keeper.pieces = total
+        keeper.members.extend(absorbed.members)
+        surviving.remove(absorbed)
+
+        # Everything that already pointed at the absorbed group follows it.
+        for original, current in mapping.items():
+            if current in absorbed.members or current == absorbed.name:
+                mapping[original] = keeper.name
+
+    return surviving, mapping

@@ -181,6 +181,29 @@ class TestOptionsAndBrowse:
                                json={"set_number": "77263", "color_mode": "rainbow"})
         assert response.status_code == 422
 
+    @pytest.mark.parametrize("limit", [1, 4, 0])
+    def test_generate_accepts_a_colour_limit(self, client, limit):
+        response = client.post("/api/generate",
+                               json={"set_number": "77263", "max_colors": limit})
+        assert response.status_code == 202
+
+    def test_generate_rejects_a_negative_colour_limit(self, client):
+        response = client.post("/api/generate",
+                               json={"set_number": "77263", "max_colors": -1})
+        assert response.status_code == 422
+
+    def test_options_expose_the_colour_limit_choices(self, client):
+        body = client.get("/api/options").json()
+        assert body["color_limits"]
+        assert body["defaults"]["max_colors"] == 4
+
+    def test_a_finished_job_reports_its_filament_colours(self, client):
+        job_id = client.post("/api/generate", json={
+            "set_number": "77263", "max_colors": 2}).json()["job_id"]
+        body = wait_for_completion(client, job_id)
+        assert body["max_colors"] == 2
+        assert len(body["color_groups"]) <= 2
+
     def test_the_chosen_options_are_recorded_on_the_job(self, client):
         job_id = client.post("/api/generate", json={
             "set_number": "77263", "color_mode": "exact", "bed_preset": "bambu_a1_mini",

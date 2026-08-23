@@ -89,6 +89,32 @@ export function Completion({ job, failedParts, onRetry, onStartOver, retrying }:
 
       {job.estimate && <EstimatePanel estimate={job.estimate} />}
 
+      {job.color_groups?.length > 0 && (
+        <div className="filaments">
+          <h4>
+            Filament colours needed ({job.color_groups.length})
+          </h4>
+          <div className="filament-list">
+            {job.color_groups.map(group => {
+              const merged = group.members.filter(m => m !== group.name)
+              return (
+                <div className="filament" key={group.name}
+                     title={merged.length ? `Also printing: ${merged.join(', ')}` : undefined}>
+                  <span className="filament-dot" style={{ background: `#${group.rgb}` }} />
+                  <span className="filament-name">
+                    <strong>{group.name}</strong>
+                    <span>
+                      {group.pieces} pieces
+                      {merged.length > 0 && ` · covers ${merged.length} more`}
+                    </span>
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {job.plates?.length > 0 && (
         <div className="plates-panel">
           <h4>Build plates</h4>

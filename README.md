@@ -197,6 +197,32 @@ LEGO colours with names like "Dark Bluish Gray", and hue is far more reliable
 than string matching. Transparent colours are always their own family, since
 they need translucent filament.
 
+### How many filaments you own
+
+Even after grouping, a set can want a dozen colours. **Filament colours you
+own** caps that — default **4** — and the closest colours are merged until no
+more than that many remain.
+
+Merges are chosen by *perceptual* distance (CIELAB), weighted by how many
+pieces would actually change colour. That weighting matters: distance alone
+will happily fold 38 blue pieces into black because the two are nominally
+close, while leaving two stray purple bricks on a plate of their own. Costing
+a merge by the pieces it recolours absorbs the strays first, which is what you
+want when the budget is four spools.
+
+Set 77263 at the default:
+
+| Limit | Filaments | Plates |
+|---|---|---|
+| No limit | 11 | 12 |
+| 6 | White, Black, Blue, Red, Yellow, Transparent | 8 |
+| **4** | **White, Black, Blue, Red** | **6** |
+| 2 | White, Black | 5 |
+
+The surviving group keeps the name and swatch of whichever colour has most
+pieces, so the spool you load is the one most of those parts need. Fewer
+colours also means fewer plates, since a plate never mixes groups.
+
 ### Printer
 
 Pick your printer in the options and parts are packed for that bed. Anything
@@ -230,6 +256,7 @@ The settings worth knowing about:
 | `ORIENT_STRATEGY` | `native` | `native` keeps studs up; `flat` lays parts down |
 | `BED_PRESET` | `bambu_p1` | Printer bed used when packing plates |
 | `COLOR_MODE` | `family` | `none`, `family` or `exact` |
+| `MAX_COLORS` | `4` | Most filament colours a set may need; 0 = no limit |
 | `PLATE_GAP_MM` | `3.0` | Gap between parts on a plate |
 | `BUILD_PLATES` | `true` | Write pre-arranged 3MF plates |
 | `PLATE_OUTPUT` | `both` | `separate`, `project` or `both` |

@@ -71,11 +71,24 @@ export interface PlateOutputOption {
   detail: string
 }
 
+export interface ColorGroupInfo {
+  name: string
+  rgb: string
+  pieces: number
+  members: string[]
+}
+
 export interface Options {
   printers: Printer[]
   color_modes: ColorModeOption[]
   plate_outputs: PlateOutputOption[]
-  defaults: { bed_preset: string; color_mode: ColorMode; plate_output: PlateOutput }
+  color_limits: number[]
+  defaults: {
+    bed_preset: string
+    color_mode: ColorMode
+    plate_output: PlateOutput
+    max_colors: number
+  }
 }
 
 export interface ColorCount {
@@ -123,6 +136,8 @@ export interface JobSummary {
   plate_output: PlateOutput
   project_file: string | null
   estimate: Estimate | null
+  max_colors: number
+  color_groups: ColorGroupInfo[]
   error: string | null
   created_at: number
   finished_at: number | null

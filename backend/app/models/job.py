@@ -77,6 +77,7 @@ class Job:
     include_spares: bool = False
     # --- options chosen for this job ---
     color_mode: str = "family"
+    max_colors: int = 4
     bed_preset: str = "bambu_p1"
     #: None means "use the server default"; the API fills it in per job.
     plate_output: str | None = None
@@ -85,6 +86,7 @@ class Job:
     oversized: list = field(default_factory=list)   # pieces too big for the bed
     project_file: str | None = None                 # name of the merged project
     estimate: dict | None = None                    # filament, cost and time
+    color_groups: list = field(default_factory=list)  # filament colours needed
 
     # --- derived counters -------------------------------------------------
     @property
@@ -125,6 +127,8 @@ class Job:
             "failed": len(self.failed_parts),
             "files_written": self.files_written,
             "color_mode": self.color_mode,
+            "max_colors": self.max_colors,
+            "color_groups": self.color_groups,
             "bed_preset": self.bed_preset,
             "plate_output": self.plate_output,
             "project_file": self.project_file,
