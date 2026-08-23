@@ -42,14 +42,21 @@ substantially faster than the first.
 
 ### With Docker (simplest)
 
-One file, one command. The container downloads its own data on first start.
+**No API key or account is needed.** Nothing to sign up for.
+
+Windows: download `install.bat`, double-click it, pick a port. Done.
+
+Anything else: put `docker-compose.yml` in a folder and run
 
 ```bash
 docker compose up -d
 ```
 
-Choose your port on the `ports:` line of `docker-compose.yml`. Running on
-Windows Server behind nginx: see [docs/DEPLOY-WINDOWS.md](docs/DEPLOY-WINDOWS.md).
+You do **not** need to clone this repository — Docker fetches the source from
+GitHub itself. The default port is **8100**; to change it, put `LEGO_PORT=9000`
+in a `.env` file next to the compose file.
+
+Full walkthrough: [docs/SETUP.md](docs/SETUP.md).
 
 ### From source
 
@@ -339,26 +346,17 @@ the built frontend on one port.
 python run.py --host 0.0.0.0 --port 8000
 ```
 
-Put nginx or Caddy in front for TLS. For SSE, disable proxy buffering
-(`proxy_buffering off;`); the app already sends `X-Accel-Buffering: no`.
-
 ### Docker (recommended for a server)
 
-One file, one command — the container downloads its own data on first start:
+One file, one command, no clone — see [docs/SETUP.md](docs/SETUP.md):
 
 ```bash
 docker compose up -d
 ```
 
-Set your port on the `ports:` line in `docker-compose.yml` (change only the
-left number; the right side stays `8000`). First start takes a few minutes
-while it fetches ~150 MB; restarts take seconds because the data lives in a
-named volume.
-
-Running it on **Windows Server behind nginx** is covered step by step in
-[docs/DEPLOY-WINDOWS.md](docs/DEPLOY-WINDOWS.md), including the nginx block —
-note that `proxy_buffering off` is required or the live progress stream will
-appear frozen.
+Default port is **8100**; change it with `LEGO_PORT` in a `.env` file. First
+start takes a few minutes while it fetches ~150 MB; restarts take seconds
+because the data lives in a named volume.
 
 Keep `--workers 1` unless you add a shared job store: jobs live in the
 process that created them.

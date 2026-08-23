@@ -1,45 +1,60 @@
-# ---------------------------------------------------------------------------
-#  Brick Foundry — the only file you need to run this.
+# ===========================================================================
+#  Brick Foundry  -  LEGO set number  ->  printable STL files
+#
+#  This is the ONLY file you need. You do NOT need to clone anything:
+#  Docker downloads the source from GitHub and builds it for you.
 #
 #      docker compose up -d
 #
-#  On first start the container downloads the LEGO catalogue and the LDraw
-#  parts library (~150 MB) by itself, then starts serving. No other commands.
-# ---------------------------------------------------------------------------
+#  NO API KEY IS NEEDED. There is nothing to sign up for and nothing to
+#  paste in. Every data source this uses is free and public.
+#
+#  On first start the container downloads the LEGO catalogue and the parts
+#  library (~150 MB) by itself. That takes a few minutes. After that,
+#  starting takes about 2 seconds.
+# ===========================================================================
 
 services:
   app:
-    build: .
+    # Source is fetched straight from GitHub - no git clone required.
+    build: https://github.com/oliverinhalo/3d-print-lego.git
+
     image: brick-foundry
     container_name: brick-foundry
+    restart: unless-stopped
 
     ports:
-      # ⇩⇩⇩  CHANGE THE PORT HERE  ⇩⇩⇩
-      # Left side is the port on your server (point nginx at this one).
-      # Right side is inside the container — leave it as 8000.
-      - "8080:8000"
-      #
-      # Recommended once nginx is in front: bind to localhost only, so the
-      # app is reachable through your domain and not directly on the port.
-      #   - "127.0.0.1:8080:8000"
+      # ===================================================================
+      #  YOUR PORT - this is the only thing most people need to change.
+      #  Change the LEFT number only. Leave ":8000" exactly as it is.
+      # ===================================================================
+      - "${LEGO_PORT:-8100}:8000"
 
     environment:
-      # Downloads the data automatically on first run. Leave this on.
+      # --- These all have sensible defaults. Change only if you want to. ---
+
+      # Download the LEGO data automatically on first start. Leave this on.
       AUTO_BOOTSTRAP: "true"
-      # Refuse absurdly large jobs. ~6000 pieces is a big Technic set.
-      MAX_PIECES_PER_JOB: "6000"
-      # Parallel model conversions. Raise on a beefy server, lower on a NAS.
+
+      # How many parts to convert at once. Raise it on a powerful server,
+      # lower it on a small NAS or VM.
       MAX_CONCURRENT_DOWNLOADS: "8"
-      # Delete finished ZIPs after this many seconds (24h).
+
+      # Biggest set allowed in one job, in pieces. ~6000 covers all but the
+      # very largest sets.
+      MAX_PIECES_PER_JOB: "6000"
+
+      # Delete finished ZIP downloads after this many seconds (24 hours).
       JOB_RETENTION: "86400"
 
-    volumes:
-      # Named volume: the catalogue, parts library and STL cache survive
-      # rebuilds, so the 150 MB download happens exactly once. Using a named
-      # volume (not a Windows path) avoids host filesystem permission issues.
-      - brick-foundry-data:/app/data
+      # Size of printed parts. 1.0 keeps exact LDraw dimensions (a 2x4 brick
+      # is 32.00 mm). Use 0.994 to match real LEGO bricks (31.80 mm).
+      PART_SCALE: "1.0"
 
-    restart: unless-stopped
+    volumes:
+      # Keeps the downloaded LEGO data and the STL cache between restarts,
+      # so the ~150 MB download happens only once.
+      - brick-foundry-data:/app/data
 
     healthcheck:
       test: ["CMD", "python", "-c",
@@ -47,8 +62,8 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      # Generous: the first boot downloads and imports ~150 MB before the
-      # server binds, and we must not be marked unhealthy while it works.
+      # Long, because the first start downloads ~150 MB before it serves.
+      # Without this the container would be killed and restarted mid-download.
       start_period: 15m
 
 volumes:

@@ -8,6 +8,12 @@ Dockerfile text eol=lf
 *.yml  text eol=lf
 *.yaml text eol=lf
 
+# Windows batch files MUST be CRLF. With LF endings cmd.exe mis-parses
+# labels and goto targets, so the installer would fail in confusing ways.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
 # Binary assets must never be line-ending converted.
 *.png  binary
 *.jpg  binary

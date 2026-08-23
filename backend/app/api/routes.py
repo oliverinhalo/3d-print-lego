@@ -170,7 +170,7 @@ async def job_events(job_id: str, request: Request,
         headers={
             "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",          # let nginx pass SSE through
+            "X-Accel-Buffering": "no",          # stop proxies buffering the stream
         },
     )
 
