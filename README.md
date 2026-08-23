@@ -147,7 +147,18 @@ Slice it. Move to the next plate. There is no Auto Arrange step.
 | **A file per plate** | `Plates/Plate_01_Red.3mf`, … | Plain core 3MF — opens in any slicer |
 
 The project file carries Bambu Studio's `Metadata/model_settings.config`,
-which declares the plates and their names. Bambu decides which plate an
+which declares the plates and their names. It must also announce itself as a
+slicer project: Bambu sets its project flag **only** when the model's
+`Application` metadata starts with `BambuStudio-` or `OrcaSlicer-`. Without
+that string the plate settings are ignored outright — you get a single
+unnamed plate and every repeated instance split into its own object. It is a
+compatibility requirement rather than a claim of authorship (OrcaSlicer
+writes the same prefix for the same reason); the real generator is recorded
+in the `Description` metadata beside it.
+
+**Pick the printer that matches your slicer profile.** Plate positions are
+computed from the bed size, so generating for a 256 x 256 bed and opening the
+project on an A1 mini profile puts the parts in the wrong places. Bambu decides which plate an
 instance belongs to by *where it sits in world space*, so each plate's pieces
 are written at that plate's world origin, reproducing the slicer's own grid
 arithmetic (`compute_colum_count` and `LOGICAL_PART_PLATE_GAP` from

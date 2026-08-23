@@ -164,6 +164,16 @@ corporate proxy.
 The data download failed. Check `docker compose logs`, fix the network
 problem, then `docker compose restart`.
 
+**The single project file opens with only one plate, unnamed**
+The parts are in roughly the right places but there is one plate and nothing
+is named. That was a bug in versions before this fix — update with
+`docker compose up -d --build` and generate again. Meanwhile the `Plates`
+folder gives you the same parts, one file per plate.
+
+**Plates open in the wrong positions**
+The printer selected when generating must match the printer profile in your
+slicer — plate spacing is derived from the bed size.
+
 **A few parts fail to generate**
 That is expected and not a bug. Very new LEGO elements have not been modelled
 in the parts library yet, and stickers and instruction sheets are skipped

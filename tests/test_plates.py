@@ -291,6 +291,24 @@ class TestProjectFile:
             return (ET.fromstring(zf.read("3D/3dmodel.model")),
                     ET.fromstring(zf.read("Metadata/model_settings.config")))
 
+    def test_it_declares_itself_as_a_slicer_project(self, project):
+        """The one thing that makes plates appear at all.
+
+        Bambu Studio sets its project flag only when the Application metadata
+        starts with "BambuStudio-" or "OrcaSlicer-". Without it the plate
+        settings are ignored entirely: one unnamed plate, and every repeated
+        instance split into a separate object.
+        """
+        _plates, path = project
+        model, _config = self._model(path)
+        metadata = {m.get("name"): m.text for m in model.findall("c:metadata", NS)}
+
+        application = metadata.get("Application", "")
+        assert application.startswith(("BambuStudio-", "OrcaSlicer-")), application
+        assert metadata.get("BambuStudio:3mfVersion")
+        # The real generator stays recorded alongside it.
+        assert "Brick Foundry" in metadata.get("Description", "")
+
     def test_the_package_carries_both_the_model_and_the_plate_settings(self, project):
         _plates, path = project
         with zipfile.ZipFile(path) as zf:
